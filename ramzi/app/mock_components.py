@@ -1,7 +1,6 @@
 """
-Mock components and Pydantic schemas for Track C (Clinician UI/UX).
-Provides full scaffolding and mock implementations for Phase 0 & Phase 1,
-and seamless adapter to live modules (storage, pipeline, exporters) when integrated.
+Mock components and fixtures for Track C (Clinician UI/UX).
+Adheres strictly to canonical schemas defined in schemas/instruction_packet.py.
 """
 
 from __future__ import annotations
@@ -13,102 +12,16 @@ from datetime import datetime, timezone
 from typing import List, Optional
 
 import textstat
-from pydantic import BaseModel, Field
 
-# ---------------------------------------------------------------------------
-# Canonical Pydantic Data Schemas (as specified in specs/02_TRACK_B_DATA_AND_STORAGE.md)
-# ---------------------------------------------------------------------------
-
-class MedicationOrder(BaseModel):
-    name: str
-    dose: str
-    route: str = "oral"
-    frequency: str
-    special_instructions: str = ""
-
-
-class ClinicalOrders(BaseModel):
-    order_id: str = "ORD-SCD-01"
-    order_version: str = "v1.2.0"
-    patient_id: str = "SYN-PED-001"
-    patient_age: str = "8 years old"
-    diagnosis: str = "Sickle Cell Disease with acute vaso-occlusive pain"
-    medications: List[MedicationOrder] = Field(default_factory=list)
-    urgent_fever_threshold: str = "100.4°F"
-    emergency_fever_threshold: str = "101.0°F"
-    daytime_phone: str = "901-595-3300"
-    after_hours_phone: str = "901-595-3300"
-    emergency_phone: str = "911"
-
-    @property
-    def fever_threshold_urgent(self) -> str:
-        return self.urgent_fever_threshold
-
-    @property
-    def fever_threshold_emergency(self) -> str:
-        return self.emergency_fever_threshold
-
-    @property
-    def phone_clinic(self) -> str:
-        return self.daytime_phone
-
-    @property
-    def phone_triage_247(self) -> str:
-        return self.after_hours_phone
-
-    @property
-    def phone_emergency(self) -> str:
-        return self.emergency_phone
-
-
-class SafetyJudgeResult(BaseModel):
-    overall_verdict: str = "PASS"  # PASS | NEEDS_REVIEW | FLAGGED_FOR_REVIEW
-    factual_drift_detected: bool = False
-    omitted_red_flags: List[str] = Field(default_factory=list)
-    contradictory_advice: List[str] = Field(default_factory=list)
-    clinical_risk_score: float = 0.0
-    explanation: str = "No critical omissions or dosage contradictions detected."
-
-
-class EvaluationMetrics(BaseModel):
-    fkgl_score: float = 5.8
-    fkgl_target_met: bool = True
-    verbatim_matches: List[str] = Field(default_factory=list)
-    verbatim_mismatches: List[str] = Field(default_factory=list)
-    verbatim_match_percent: float = 100.0
-    safety_judge: SafetyJudgeResult = Field(default_factory=SafetyJudgeResult)
-
-
-class InstructionPacket(BaseModel):
-    packet_id: str = Field(default_factory=lambda: f"PKT-{uuid.uuid4().hex[:8].upper()}")
-    condition: str = "sickle_cell_pain"
-    module_version: str = "v1.2.0"
-    order_version: str = "v1.2.0"
-    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-    status: str = "PENDING"  # PENDING | APPROVED | EDITED_AND_APPROVED | REJECTED_DRIFT
-    rejection_reason: Optional[str] = None
-    original_instructions: str = ""
-    clinical_orders: ClinicalOrders = Field(default_factory=ClinicalOrders)
-    simplified_en: str = ""
-    clinician_edited_en: Optional[str] = None
-    translated_es: str = ""
-    back_translated_en: str = ""
-    metrics: EvaluationMetrics = Field(default_factory=EvaluationMetrics)
-    llm1_model: str = "gpt52"
-    llm2_model: str = "gpt4o"
-    physician_decision: Optional[str] = None
-    pdf_annotation: Optional[str] = None
-
-
-def get_physician_annotation(packet: InstructionPacket) -> str:
-    """Helper returning standardized physician decision status."""
-    if packet.status == "APPROVED":
-        return "Approved by physician"
-    elif packet.status == "EDITED_AND_APPROVED":
-        return "Edited and approved by physician"
-    elif packet.status == "REJECTED_DRIFT":
-        return "Rejected by physician"
-    return "Pending physician review"
+# Authoritative schemas
+from schemas.instruction_packet import (
+    ClinicalOrders,
+    EvaluationMetrics,
+    InstructionPacket,
+    MedicationOrder,
+    SafetyJudgeResult,
+    get_physician_annotation,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -194,7 +107,6 @@ def evaluate_text_verbatim_and_fkgl(
 
     return EvaluationMetrics(
         fkgl_score=fkgl,
-        fkgl_target_met=fkgl_met,
         verbatim_matches=matches,
         verbatim_mismatches=mismatches,
         verbatim_match_percent=match_pct,
@@ -257,7 +169,7 @@ MOCK_ORDERS = {
         order_id="ORD-SCD-01",
         order_version="v1.2.0",
         patient_id="SYN-PED-001",
-        patient_age="8 years old",
+        age="8 years old",
         diagnosis="Sickle Cell Disease with acute vaso-occlusive pain",
         medications=[
             MedicationOrder(
@@ -285,7 +197,7 @@ MOCK_ORDERS = {
         order_id="ORD-FN-01",
         order_version="v1.2.0",
         patient_id="SYN-PED-002",
-        patient_age="5 years old",
+        age="5 years old",
         diagnosis="B-ALL (Acute Lymphoblastic Leukemia) with post-chemo neutropenia",
         medications=[
             MedicationOrder(
@@ -306,7 +218,7 @@ MOCK_ORDERS = {
         order_id="ORD-CNH-01",
         order_version="v1.2.0",
         patient_id="SYN-PED-003",
-        patient_age="12 years old",
+        age="12 years old",
         diagnosis="Osteosarcoma post-cisplatin infusion",
         medications=[
             MedicationOrder(
@@ -508,23 +420,18 @@ def run_mock_pipeline(
     metrics = evaluate_text_verbatim_and_fkgl(simplified_en, orders, drift_mode=drift_mode)
 
     packet = InstructionPacket(
+        packet_id=f"PKT-{uuid.uuid4().hex[:8].upper()}",
         condition=condition,
         module_version=module_version,
         order_version=orders.order_version,
         status="PENDING",
-        original_instructions=raw_template,
+        original_clinical_text=raw_template,
         clinical_orders=orders,
         simplified_en=simplified_en,
-        clinician_edited_en=simplified_en,
         translated_es=translated_es,
         back_translated_en=back_translated_en,
-        metrics=metrics,
-        llm1_model=llm1_model,
-        llm2_model=llm2_model,
-        physician_decision=get_physician_annotation(
-            InstructionPacket(status="PENDING")
-        ),
-        pdf_annotation="Pending physician review",
+        evaluation_metrics=metrics,
+        physician_decision="Pending physician review",
     )
     return packet
 
@@ -539,7 +446,7 @@ _IN_MEMORY_LIBRARY: List[InstructionPacket] = []
 def save_to_gold_library(packet: InstructionPacket) -> None:
     """Save reviewed packet to in-memory audit store and optional local JSONL."""
     packet.physician_decision = get_physician_annotation(packet)
-    packet.pdf_annotation = packet.physician_decision
+    packet.reviewed_at = datetime.now(timezone.utc).isoformat()
     _IN_MEMORY_LIBRARY.append(packet)
 
 
@@ -646,14 +553,14 @@ def generate_handout_pdf(packet: InstructionPacket) -> bytes:
     # Patient Meta
     meta_text = (
         f"<b>Patient ID:</b> {packet.clinical_orders.patient_id} | "
-        f"<b>Age:</b> {packet.clinical_orders.patient_age} | "
+        f"<b>Age:</b> {packet.clinical_orders.age or 'N/A'} | "
         f"<b>Diagnosis:</b> {packet.clinical_orders.diagnosis}"
     )
     elements.append(Paragraph(meta_text, cell_style))
     elements.append(Spacer(1, 10))
 
     # 2-Column Side-by-Side: Left (English), Right (Spanish)
-    en_content = (packet.clinician_edited_en or packet.simplified_en).replace("\n", "<br/>")
+    en_content = packet.simplified_en.replace("\n", "<br/>")
     es_content = packet.translated_es.replace("\n", "<br/>")
 
     col_en = Paragraph(f"<b>ENGLISH (5th–6th Grade)</b><br/><br/>{en_content}", cell_style)
