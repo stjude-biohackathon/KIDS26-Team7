@@ -1,0 +1,20 @@
+# Secrets & local configuration
+.streamlit/
+*.pem
+*.key
+*.token
+.env
+
+# Data and caches
+data/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.coverage
+htmlcov/
+venv/
+.venv/
+.DS_Store
+*.swp
+.*.swp
