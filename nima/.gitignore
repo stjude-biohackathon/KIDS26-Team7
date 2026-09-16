@@ -1,0 +1,15 @@
+# Secrets and Environment
+.streamlit/
+.env
+*.pem
+*.key
+
+# Data directories (Zero real patient data, zero local data on disk)
+data/
+
+# Python cache & virtualenv
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.pytest_cache/
