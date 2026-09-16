@@ -338,28 +338,13 @@ with st.sidebar:
 
     col_t1, col_t2 = st.columns(2)
     with col_t1:
-        fever_urg = st.text_input(
-            "Urgent Fever:",
-            value=getattr(base_order, "urgent_fever_threshold", getattr(base_order, "fever_threshold_urgent", "100.4°F")),
-        )
+        fever_urg = st.text_input("Urgent Fever:", value=base_order.urgent_fever_threshold)
     with col_t2:
-        fever_emg = st.text_input(
-            "Emergency Fever:",
-            value=getattr(base_order, "emergency_fever_threshold", getattr(base_order, "fever_threshold_emergency", "101.0°F")),
-        )
+        fever_emg = st.text_input("Emergency Fever:", value=base_order.fever_threshold_emergency)
 
-    daytime_phone = st.text_input(
-        "Daytime Phone:",
-        value=getattr(base_order, "daytime_phone", getattr(base_order, "phone_clinic", "901-595-3300")),
-    )
-    after_hours_phone = st.text_input(
-        "After-Hours Phone:",
-        value=getattr(base_order, "after_hours_phone", getattr(base_order, "phone_triage_247", "901-595-3300")),
-    )
-    emergency_phone = st.text_input(
-        "Emergency Phone:",
-        value=getattr(base_order, "emergency_phone", getattr(base_order, "phone_emergency", "911")),
-    )
+    phone_clinic = st.text_input("Daytime Clinic:", value=base_order.phone_clinic)
+    phone_triage = st.text_input("24/7 Triage:", value=base_order.phone_triage_247)
+    phone_emg = st.text_input("Emergency Call:", value=base_order.phone_emergency)
 
     active_orders = ClinicalOrders(
         order_id=base_order.order_id,
@@ -369,10 +354,10 @@ with st.sidebar:
         diagnosis=diagnosis,
         medications=med_list,
         urgent_fever_threshold=fever_urg,
-        emergency_fever_threshold=fever_emg,
-        daytime_phone=daytime_phone,
-        after_hours_phone=after_hours_phone,
-        emergency_phone=emergency_phone,
+        fever_threshold_emergency=fever_emg,
+        phone_clinic=phone_clinic,
+        phone_triage_247=phone_triage,
+        phone_emergency=phone_emg,
     )
 
     st.divider()
@@ -456,12 +441,12 @@ else:
             orig_text += f"• {med.name}: {med.dose} {med.route} {med.frequency}\n  Note: {med.special_instructions}\n"
         orig_text += (
             f"\nSAFETY LIMITS:\n"
-            f"• Urgent Fever: {getattr(packet.clinical_orders, 'urgent_fever_threshold', getattr(packet.clinical_orders, 'fever_threshold_urgent', ''))}\n"
-            f"• Emergency Fever: {getattr(packet.clinical_orders, 'emergency_fever_threshold', getattr(packet.clinical_orders, 'fever_threshold_emergency', ''))}\n\n"
+            f"• Urgent Fever: {packet.clinical_orders.urgent_fever_threshold}\n"
+            f"• Emergency Fever: {packet.clinical_orders.fever_threshold_emergency}\n\n"
             f"CONTACTS:\n"
-            f"• Daytime Phone: {getattr(packet.clinical_orders, 'daytime_phone', getattr(packet.clinical_orders, 'phone_clinic', ''))}\n"
-            f"• After-Hours Phone: {getattr(packet.clinical_orders, 'after_hours_phone', getattr(packet.clinical_orders, 'phone_triage_247', ''))}\n"
-            f"• Emergency Phone: {getattr(packet.clinical_orders, 'emergency_phone', getattr(packet.clinical_orders, 'phone_emergency', ''))}\n\n"
+            f"• Clinic: {packet.clinical_orders.phone_clinic}\n"
+            f"• 24/7 Triage: {packet.clinical_orders.phone_triage_247}\n"
+            f"• Emergency: {packet.clinical_orders.phone_emergency}\n\n"
             f"=== PROTOCOL TEMPLATE ({packet.module_version}) ===\n"
             f"{packet.original_instructions}"
         )
