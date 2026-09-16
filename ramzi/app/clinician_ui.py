@@ -215,9 +215,10 @@ def reject_packet_dialog(packet: InstructionPacket):
                 return
             
             packet.status = "REJECTED_DRIFT"
-            packet.rejection_reason = f"[{drift_category}] {explanation.strip()}"
+            packet.rejection_category = drift_category
+            packet.rejection_reason = explanation.strip()
             packet.physician_decision = "Rejected by physician"
-            packet.pdf_annotation = "Rejected by physician"
+            packet.reviewed_at = datetime.now(timezone.utc).isoformat()
             
             # Persist to library
             if HAS_LIVE_STORAGE:
@@ -313,7 +314,7 @@ with st.sidebar:
     base_order = MOCK_ORDERS.get(condition, MOCK_ORDERS["sickle_cell_pain"])
     
     patient_id = st.text_input("Patient ID (De-identified):", value=base_order.patient_id)
-    patient_age = st.text_input("Patient Age:", value=base_order.patient_age)
+    age = st.text_input("Patient Age:", value=base_order.age or "8 years old")
     diagnosis = st.text_input("Diagnosis:", value=base_order.diagnosis)
 
     # Dynamic Medications
@@ -340,32 +341,32 @@ with st.sidebar:
     with col_t1:
         fever_urg = st.text_input(
             "Urgent Fever:",
-            value=getattr(base_order, "urgent_fever_threshold", getattr(base_order, "fever_threshold_urgent", "100.4°F")),
+            value=base_order.urgent_fever_threshold or "100.4°F",
         )
     with col_t2:
         fever_emg = st.text_input(
             "Emergency Fever:",
-            value=getattr(base_order, "emergency_fever_threshold", getattr(base_order, "fever_threshold_emergency", "101.0°F")),
+            value=base_order.emergency_fever_threshold or "101.0°F",
         )
 
     daytime_phone = st.text_input(
         "Daytime Phone:",
-        value=getattr(base_order, "daytime_phone", getattr(base_order, "phone_clinic", "901-595-3300")),
+        value=base_order.daytime_phone or "901-595-3300",
     )
     after_hours_phone = st.text_input(
         "After-Hours Phone:",
-        value=getattr(base_order, "after_hours_phone", getattr(base_order, "phone_triage_247", "901-595-3300")),
+        value=base_order.after_hours_phone or "901-595-3300",
     )
     emergency_phone = st.text_input(
         "Emergency Phone:",
-        value=getattr(base_order, "emergency_phone", getattr(base_order, "phone_emergency", "911")),
+        value=base_order.emergency_phone or "911",
     )
 
     active_orders = ClinicalOrders(
         order_id=base_order.order_id,
         order_version=order_version,
         patient_id=patient_id,
-        patient_age=patient_age,
+        age=age,
         diagnosis=diagnosis,
         medications=med_list,
         urgent_fever_threshold=fever_urg,
@@ -419,7 +420,7 @@ else:
     col_info, col_stat = st.columns([3, 1])
     with col_info:
         st.markdown(
-            f"**Patient:** `{packet.clinical_orders.patient_id}` ({packet.clinical_orders.patient_age}) | "
+            f"**Patient:** `{packet.clinical_orders.patient_id}` ({packet.clinical_orders.age or 'N/A'}) | "
             f"**Diagnosis:** `{packet.clinical_orders.diagnosis}` | "
             f"**Packet:** `{packet.packet_id}`"
         )
@@ -448,7 +449,7 @@ else:
         st.markdown("<div class='col-header'>1. Original Clinical Orders</div>", unsafe_allow_html=True)
         orig_text = (
             f"=== CLINICAL ORDERS ===\n"
-            f"Patient: {packet.clinical_orders.patient_id} ({packet.clinical_orders.patient_age})\n"
+            f"Patient: {packet.clinical_orders.patient_id} ({packet.clinical_orders.age or 'N/A'})\n"
             f"Diagnosis: {packet.clinical_orders.diagnosis}\n\n"
             f"MEDICATIONS:\n"
         )
@@ -456,14 +457,14 @@ else:
             orig_text += f"• {med.name}: {med.dose} {med.route} {med.frequency}\n  Note: {med.special_instructions}\n"
         orig_text += (
             f"\nSAFETY LIMITS:\n"
-            f"• Urgent Fever: {getattr(packet.clinical_orders, 'urgent_fever_threshold', getattr(packet.clinical_orders, 'fever_threshold_urgent', ''))}\n"
-            f"• Emergency Fever: {getattr(packet.clinical_orders, 'emergency_fever_threshold', getattr(packet.clinical_orders, 'fever_threshold_emergency', ''))}\n\n"
+            f"• Urgent Fever: {packet.clinical_orders.urgent_fever_threshold or ''}\n"
+            f"• Emergency Fever: {packet.clinical_orders.emergency_fever_threshold or ''}\n\n"
             f"CONTACTS:\n"
-            f"• Daytime Phone: {getattr(packet.clinical_orders, 'daytime_phone', getattr(packet.clinical_orders, 'phone_clinic', ''))}\n"
-            f"• After-Hours Phone: {getattr(packet.clinical_orders, 'after_hours_phone', getattr(packet.clinical_orders, 'phone_triage_247', ''))}\n"
-            f"• Emergency Phone: {getattr(packet.clinical_orders, 'emergency_phone', getattr(packet.clinical_orders, 'phone_emergency', ''))}\n\n"
+            f"• Daytime Phone: {packet.clinical_orders.daytime_phone or ''}\n"
+            f"• After-Hours Phone: {packet.clinical_orders.after_hours_phone or ''}\n"
+            f"• Emergency Phone: {packet.clinical_orders.emergency_phone or ''}\n\n"
             f"=== PROTOCOL TEMPLATE ({packet.module_version}) ===\n"
-            f"{packet.original_instructions}"
+            f"{packet.original_clinical_text}"
         )
         st.markdown(f"<div class='clinical-box'>{orig_text}</div>", unsafe_allow_html=True)
 
@@ -474,11 +475,11 @@ else:
         st.markdown("<div class='col-header'>2. Simplified English (Clinician Edit)</div>", unsafe_allow_html=True)
         
         # Telemetry Badges
-        metrics = packet.metrics
+        metrics = packet.evaluation_metrics or EvaluationMetrics()
         badge_html = "<div>"
         
         # FKGL Badge
-        if metrics.fkgl_target_met:
+        if 4.0 <= metrics.fkgl_score <= 6.9:
             badge_html += f"<span class='metric-badge-pass'>🟢 FKGL: {metrics.fkgl_score}</span>"
         else:
             badge_html += f"<span class='metric-badge-warn'>🟡 FKGL: {metrics.fkgl_score} (Target 5-6)</span>"
@@ -490,11 +491,11 @@ else:
             badge_html += f"<span class='metric-badge-danger'>🔴 Missing: {len(metrics.verbatim_mismatches)} tokens</span>"
             
         # Safety Judge Badge
-        if metrics.safety_judge.overall_verdict == "PASS":
+        if metrics.safety_judge and metrics.safety_judge.overall_verdict == "PASS":
             badge_html += "<span class='metric-badge-pass'>🟢 Judge: PASS</span>"
-        elif metrics.safety_judge.overall_verdict == "NEEDS_REVIEW":
+        elif metrics.safety_judge and metrics.safety_judge.overall_verdict == "NEEDS_REVIEW":
             badge_html += "<span class='metric-badge-warn'>🟡 Judge: REVIEW</span>"
-        else:
+        elif metrics.safety_judge:
             badge_html += "<span class='metric-badge-danger'>🔴 Judge: FLAGGED</span>"
             
         badge_html += "</div>"
@@ -502,7 +503,7 @@ else:
         
         if metrics.verbatim_mismatches:
             st.caption(f"<small style='color: #DC2626;'>Mismatched safety tokens: {', '.join(metrics.verbatim_mismatches)}</small>", unsafe_allow_html=True)
-        if metrics.safety_judge.factual_drift_detected:
+        if metrics.safety_judge and metrics.safety_judge.factual_drift_detected:
             st.caption(f"<small style='color: #DC2626;'>Safety Alert: {metrics.safety_judge.explanation}</small>", unsafe_allow_html=True)
 
         # Interactive text area with two-way binding
@@ -543,11 +544,12 @@ else:
     with btn_col1:
         if st.button("✏️ Save & Check Edits", use_container_width=True, help="Re-runs readability and verbatim checks while keeping status PENDING"):
             edited_text = st.session_state.get("txt_clinician_en", packet.simplified_en)
-            packet.clinician_edited_en = edited_text
+            packet.simplified_en = edited_text
+            packet.edited_by_physician = True
             
             # Re-evaluate FKGL and verbatim checks
             new_metrics = evaluate_text_verbatim_and_fkgl(edited_text, packet.clinical_orders)
-            packet.metrics = new_metrics
+            packet.evaluation_metrics = new_metrics
             
             # In mock mode, re-run translation updates
             packet.translated_es = (
@@ -564,7 +566,6 @@ else:
             # Governance Invariant: status remains PENDING
             packet.status = "PENDING"
             packet.physician_decision = "Pending physician review"
-            packet.pdf_annotation = "Pending physician review"
             st.session_state["edits_checked_banner"] = True
             st.session_state["pdf_bytes"] = None
             st.rerun()
@@ -577,12 +578,14 @@ else:
             
             if edited_text.strip() != backup_text.strip():
                 packet.status = "EDITED_AND_APPROVED"
+                packet.edited_by_physician = True
             else:
                 packet.status = "APPROVED"
+                packet.edited_by_physician = False
                 
-            packet.clinician_edited_en = edited_text
+            packet.simplified_en = edited_text
             packet.physician_decision = get_physician_annotation(packet)
-            packet.pdf_annotation = packet.physician_decision
+            packet.reviewed_at = datetime.now(timezone.utc).isoformat()
             
             # Persist to versioned library
             if HAS_LIVE_STORAGE:
@@ -642,9 +645,10 @@ with st.expander("📚 View versioned library records", expanded=False):
                 "Condition": r.condition,
                 "Status": r.status,
                 "Physician Decision": r.physician_decision or get_physician_annotation(r),
-                "PDF Annotation": r.pdf_annotation or get_physician_annotation(r),
-                "FKGL Grade": r.metrics.fkgl_score if r.metrics else 0.0,
-                "Verbatim Match %": f"{r.metrics.verbatim_match_percent}%" if r.metrics else "100%",
-                "Rejection / Notes": r.rejection_reason or "—",
+                "FKGL Grade": r.evaluation_metrics.fkgl_score if r.evaluation_metrics else 0.0,
+                "Verbatim Match %": f"{r.evaluation_metrics.verbatim_match_percent}%" if r.evaluation_metrics else "100%",
+                "Rejection Category": r.rejection_category or "—",
+                "Rejection Reason": r.rejection_reason or "—",
+                "Reviewed At": r.reviewed_at[:19].replace("T", " ") if r.reviewed_at else "—",
             })
         st.dataframe(table_rows, use_container_width=True)
