@@ -35,30 +35,10 @@ class ClinicalOrders(BaseModel):
     diagnosis: str = "Sickle Cell Disease with acute vaso-occlusive pain"
     medications: List[MedicationOrder] = Field(default_factory=list)
     urgent_fever_threshold: str = "100.4°F"
-    emergency_fever_threshold: str = "101.0°F"
-    daytime_phone: str = "901-595-3300"
-    after_hours_phone: str = "901-595-3300"
-    emergency_phone: str = "911"
-
-    @property
-    def fever_threshold_urgent(self) -> str:
-        return self.urgent_fever_threshold
-
-    @property
-    def fever_threshold_emergency(self) -> str:
-        return self.emergency_fever_threshold
-
-    @property
-    def phone_clinic(self) -> str:
-        return self.daytime_phone
-
-    @property
-    def phone_triage_247(self) -> str:
-        return self.after_hours_phone
-
-    @property
-    def phone_emergency(self) -> str:
-        return self.emergency_phone
+    fever_threshold_emergency: str = "101.0°F"
+    phone_clinic: str = "901-595-3300"
+    phone_triage_247: str = "901-595-3300"
+    phone_emergency: str = "911"
 
 
 class SafetyJudgeResult(BaseModel):
@@ -128,14 +108,14 @@ def extract_verbatim_tokens(orders: ClinicalOrders) -> List[str]:
             tokens.append(med.dose.strip())
     if orders.urgent_fever_threshold:
         tokens.append(orders.urgent_fever_threshold.strip())
-    if orders.emergency_fever_threshold:
-        tokens.append(orders.emergency_fever_threshold.strip())
-    if orders.daytime_phone:
-        tokens.append(orders.daytime_phone.strip())
-    if orders.after_hours_phone:
-        tokens.append(orders.after_hours_phone.strip())
-    if orders.emergency_phone:
-        tokens.append(orders.emergency_phone.strip())
+    if orders.fever_threshold_emergency:
+        tokens.append(orders.fever_threshold_emergency.strip())
+    if orders.phone_clinic:
+        tokens.append(orders.phone_clinic.strip())
+    if orders.phone_triage_247:
+        tokens.append(orders.phone_triage_247.strip())
+    if orders.phone_emergency:
+        tokens.append(orders.phone_emergency.strip())
     return tokens
 
 
@@ -276,10 +256,10 @@ MOCK_ORDERS = {
             ),
         ],
         urgent_fever_threshold="100.4°F",
-        emergency_fever_threshold="101.0°F",
-        daytime_phone="901-595-3300",
-        after_hours_phone="901-595-3300",
-        emergency_phone="911",
+        fever_threshold_emergency="101.0°F",
+        phone_clinic="901-595-3300",
+        phone_triage_247="901-595-3300",
+        phone_emergency="911",
     ),
     "fever_neutropenia": ClinicalOrders(
         order_id="ORD-FN-01",
@@ -297,10 +277,10 @@ MOCK_ORDERS = {
             ),
         ],
         urgent_fever_threshold="100.4°F",
-        emergency_fever_threshold="101.0°F",
-        daytime_phone="901-595-3300",
-        after_hours_phone="901-595-3300",
-        emergency_phone="911",
+        fever_threshold_emergency="101.0°F",
+        phone_clinic="901-595-3300",
+        phone_triage_247="901-595-3300",
+        phone_emergency="911",
     ),
     "chemo_nausea_hydration": ClinicalOrders(
         order_id="ORD-CNH-01",
@@ -318,10 +298,10 @@ MOCK_ORDERS = {
             ),
         ],
         urgent_fever_threshold="100.4°F",
-        emergency_fever_threshold="101.0°F",
-        daytime_phone="901-595-3300",
-        after_hours_phone="901-595-3300",
-        emergency_phone="911",
+        fever_threshold_emergency="101.0°F",
+        phone_clinic="901-595-3300",
+        phone_triage_247="901-595-3300",
+        phone_emergency="911",
     ),
 }
 
@@ -363,8 +343,8 @@ def run_mock_pipeline(
             f"• Call immediately if temperature reaches {urg_temp} or higher.\n"
             f"• Call if your child has chest pain, fast breathing, or sudden tiredness.\n\n"
             f"4. Who to call:\n"
-            f"• Day or night clinic phone: {orders.daytime_phone}.\n"
-            f"• If your child cannot wake up, call {orders.emergency_phone} right away."
+            f"• Day or night clinic phone: {orders.phone_clinic}.\n"
+            f"• If your child cannot wake up, call {orders.phone_emergency} right away."
         )
 
         translated_es = (
@@ -378,8 +358,8 @@ def run_mock_pipeline(
             f"• Llame de inmediato si la temperatura llega a {urg_temp} o más.\n"
             f"• Llame si su hijo tiene dolor en el pecho o respiración rápida.\n\n"
             f"4. A quién llamar:\n"
-            f"• Teléfono de la clínica de día o de noche: {orders.daytime_phone}.\n"
-            f"• Si su hijo no se despierta, llame al {orders.emergency_phone} de inmediato."
+            f"• Teléfono de la clínica de día o de noche: {orders.phone_clinic}.\n"
+            f"• Si su hijo no se despierta, llame al {orders.phone_emergency} de inmediato."
         )
 
         back_translated_en = (
@@ -393,13 +373,13 @@ def run_mock_pipeline(
             f"• Call immediately if temperature reaches {urg_temp} or higher.\n"
             f"• Call if child has chest pain or fast breathing.\n\n"
             f"4. Contact numbers:\n"
-            f"• Clinic day and night phone: {orders.daytime_phone}.\n"
-            f"• If child does not wake up, call {orders.emergency_phone} right away."
+            f"• Clinic day and night phone: {orders.phone_clinic}.\n"
+            f"• If child does not wake up, call {orders.phone_emergency} right away."
         )
 
     elif condition == "fever_neutropenia":
         urg_temp = orders.urgent_fever_threshold
-        emg_temp = orders.emergency_fever_threshold
+        emg_temp = orders.fever_threshold_emergency
         if drift_mode == "Altered Fever Threshold":
             urg_temp = "104.5°F"
             emg_temp = "105.0°F"
@@ -414,8 +394,8 @@ def run_mock_pipeline(
             f"• If fever reaches {urg_temp} or {emg_temp}, bring your child to the hospital immediately.\n"
             f"• Your child must get antibiotics within 60 minutes.\n\n"
             f"3. Contact numbers:\n"
-            f"• Call 24/7 triage clinic immediately at {orders.after_hours_phone}.\n"
-            f"• For severe breathing problems or extreme sleepiness, call {orders.emergency_phone}."
+            f"• Call 24/7 triage clinic immediately at {orders.phone_triage_247}.\n"
+            f"• For severe breathing problems or extreme sleepiness, call {orders.phone_emergency}."
         )
 
         translated_es = (
@@ -428,8 +408,8 @@ def run_mock_pipeline(
             f"• Si la fiebre llega a {urg_temp} o {emg_temp}, traiga a su hijo al hospital de inmediato.\n"
             f"• Su hijo debe recibir antibióticos en menos de 60 minutos.\n\n"
             f"3. Números de contacto:\n"
-            f"• Llame de inmediato al teléfono de triaje las 24 horas al {orders.after_hours_phone}.\n"
-            f"• Si tiene dificultad grave para respirar, llame al {orders.emergency_phone}."
+            f"• Llame de inmediato al teléfono de triaje las 24 horas al {orders.phone_triage_247}.\n"
+            f"• Si tiene dificultad grave para respirar, llame al {orders.phone_emergency}."
         )
 
         back_translated_en = (
@@ -442,8 +422,8 @@ def run_mock_pipeline(
             f"• If fever reaches {urg_temp} or {emg_temp}, bring your child to hospital right away.\n"
             f"• Child must receive antibiotics within 60 minutes.\n\n"
             f"3. Emergency numbers:\n"
-            f"• Call 24-hour triage immediately at {orders.after_hours_phone}.\n"
-            f"• For severe trouble breathing, call {orders.emergency_phone}."
+            f"• Call 24-hour triage immediately at {orders.phone_triage_247}.\n"
+            f"• For severe trouble breathing, call {orders.phone_emergency}."
         )
 
     else:  # chemo_nausea_hydration
@@ -466,8 +446,8 @@ def run_mock_pipeline(
             f"• Call if no wet diapers or urination for 12 hours.\n"
             f"• Call if fever reaches {orders.urgent_fever_threshold}.\n\n"
             f"4. Contact phone numbers:\n"
-            f"• Daytime clinic phone: {orders.daytime_phone}.\n"
-            f"• In severe emergency, call {orders.emergency_phone}."
+            f"• Daytime clinic phone: {orders.phone_clinic}.\n"
+            f"• In severe emergency, call {orders.phone_emergency}."
         )
 
         translated_es = (
@@ -483,8 +463,8 @@ def run_mock_pipeline(
             f"• Llame si no moja pañales o no orina durante 12 horas.\n"
             f"• Llame si la fiebre llega a {orders.urgent_fever_threshold}.\n\n"
             f"4. Teléfonos de contacto:\n"
-            f"• Teléfono de la clínica de día: {orders.daytime_phone}.\n"
-            f"• En emergencias graves, llame al {orders.emergency_phone}."
+            f"• Teléfono de la clínica de día: {orders.phone_clinic}.\n"
+            f"• En emergencias graves, llame al {orders.phone_emergency}."
         )
 
         back_translated_en = (
@@ -500,8 +480,8 @@ def run_mock_pipeline(
             f"• Call if no wet diapers or urine for 12 hours.\n"
             f"• Call if fever hits {orders.urgent_fever_threshold}.\n\n"
             f"4. Contact numbers:\n"
-            f"• Daytime clinic: {orders.daytime_phone}.\n"
-            f"• Severe emergency: call {orders.emergency_phone}."
+            f"• Daytime clinic: {orders.phone_clinic}.\n"
+            f"• Severe emergency: call {orders.phone_emergency}."
         )
 
     # Evaluate metrics

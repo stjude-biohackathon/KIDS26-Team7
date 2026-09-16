@@ -45,11 +45,11 @@ class TestTrackCComponents(unittest.TestCase):
                     frequency="every 4 hours as needed for severe pain",
                 ),
             ],
-            urgent_fever_threshold="100.4°F",
-            emergency_fever_threshold="101.0°F",
-            daytime_phone="901-595-3300",
-            after_hours_phone="901-595-3300",
-            emergency_phone="911",
+            fever_threshold_urgent="100.4°F",
+            fever_threshold_emergency="101.0°F",
+            phone_clinic="901-595-3300",
+            phone_triage_247="901-595-3300",
+            phone_emergency="911",
         )
 
     def test_schema_instantiation(self):
