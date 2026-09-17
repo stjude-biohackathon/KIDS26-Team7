@@ -61,7 +61,7 @@ def _load_secrets_section(alias: str) -> dict:
     try:
         import streamlit as st
 
-        if alias in st.secrets and isinstance(st.secrets[alias], dict):
+        if alias in st.secrets: 
             return dict(st.secrets[alias])
     except Exception:
         pass
