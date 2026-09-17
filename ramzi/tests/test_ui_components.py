@@ -197,6 +197,11 @@ class TestTrackCComponents(unittest.TestCase):
         self.assertTrue(any("Approve & Publish" in l for l in button_labels))
         self.assertTrue(any("Reject & Log Drift" in l for l in button_labels))
 
+        # Verify telemetry metrics for both FKGL and Verbatim score
+        metric_labels = [m.label for m in at.metric]
+        self.assertTrue(any("FKGL Readability" in l for l in metric_labels), f"FKGL metric not found in: {metric_labels}")
+        self.assertTrue(any("Verbatim Score" in l for l in metric_labels), f"Verbatim metric not found in: {metric_labels}")
+
     def test_streamlit_app_inline_edit_and_approve(self):
         """Simulate Streamlit inline editing, re-checking, and approval gate."""
         from streamlit.testing.v1 import AppTest
@@ -223,6 +228,11 @@ class TestTrackCComponents(unittest.TestCase):
                 b.click().run()
                 break
         self.assertEqual(len(at.exception), 0)
+
+        # Verify telemetry metrics updated and present post-edit
+        metric_labels_after_edit = [m.label for m in at.metric]
+        self.assertTrue(any("Verbatim Score" in l for l in metric_labels_after_edit))
+        self.assertTrue(any("FKGL Readability" in l for l in metric_labels_after_edit))
 
         # Approve & publish
         for b in at.button:
