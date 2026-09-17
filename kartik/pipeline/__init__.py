@@ -1,1 +1,1 @@
-"""Track A pipeline scaffolding; shared contracts are pending Sync Point 0."""
+"""Track A's offline mock pipeline and real quality checks for Sync Point 1."""

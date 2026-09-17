@@ -1,10 +1,25 @@
+# Secrets & local configuration
 .streamlit/
+*.pem
+*.key
+*.token
+.env
+
+# Data and caches
 data/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.coverage
+htmlcov/
 venv/
 .venv/
-__pycache__/
+.DS_Store
+*.swp
+.*.swp
+
+# Preserve existing Kartik local-file exclusions.
 *.py[cod]
-.pytest_cache/
-.env
 .env.*
 !.env.example
