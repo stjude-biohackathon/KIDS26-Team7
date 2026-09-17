@@ -47,7 +47,8 @@ class ConfiguredCheckTests(unittest.TestCase):
     def test_is_github_app_configured_false_when_missing(self):
         with patch.dict(os.environ, {}, clear=True):
             with patch("os.path.exists", return_value=False):
-                self.assertFalse(github_loader.is_github_app_configured())
+                with patch("storage.github_loader._read_streamlit_secrets_section", return_value={}):
+                    self.assertFalse(github_loader.is_github_app_configured())
 
 
 class DataloaderSectionParsingTests(unittest.TestCase):
@@ -59,7 +60,8 @@ class DataloaderSectionParsingTests(unittest.TestCase):
         }
         with patch.dict(os.environ, env, clear=True):
             with patch("os.path.exists", return_value=False):
-                config = github_loader.get_dataloader_config()
+                with patch("storage.github_loader._read_streamlit_secrets_section", return_value={}):
+                    config = github_loader.get_dataloader_config()
         self.assertEqual(config["GITHUB_APP_ID"], "123")
         self.assertEqual(config["GITHUB_DATA_REPO"], "stjude-biohackathon/team7-data")
         self.assertIn("MODULES_PATH", config)
@@ -81,7 +83,10 @@ class DataloaderSectionParsingTests(unittest.TestCase):
             os.chdir(tmp_dir)
             try:
                 with patch.dict(os.environ, {}, clear=True):
-                    config = github_loader.get_dataloader_config()
+                    # Isolate from any real global secrets so this test verifies
+                    # only the project-local-file fallback path.
+                    with patch("storage.github_loader._read_streamlit_secrets_section", return_value={}):
+                        config = github_loader.get_dataloader_config()
             finally:
                 os.chdir(original_cwd)
         self.assertEqual(config["GITHUB_APP_ID"], "789")
@@ -123,6 +128,28 @@ class TokenCachingTests(unittest.TestCase):
             self.assertEqual(second, "minted-token-1")
             # Only one POST despite two calls: the second was served from the in-memory cache.
             self.assertEqual(mock_post.call_count, 1)
+        finally:
+            os.unlink(key_path)
+
+    def test_installation_token_request_sends_bearer_jwt_header(self):
+        pem = _generate_test_private_key_pem()
+        with tempfile.NamedTemporaryFile(suffix=".pem", delete=False) as key_file:
+            key_file.write(pem)
+            key_path = key_file.name
+        try:
+            mock_response = MagicMock()
+            mock_response.json.return_value = {"token": "minted-token"}
+            mock_response.raise_for_status.return_value = None
+            with patch("storage.github_loader.requests.post", return_value=mock_response) as mock_post:
+                with patch(
+                    "storage.github_loader.mint_jwt", return_value="fake-jwt"
+                ) as mock_mint_jwt:
+                    github_loader.get_installation_access_token("app-id", "install-id", key_path)
+            mock_mint_jwt.assert_called_once()
+            called_headers = mock_post.call_args.kwargs["headers"]
+            # Regression guard: the installation-token exchange must send the
+            # real minted JWT as a Bearer credential, not a placeholder literal.
+            self.assertEqual(called_headers["Authorization"], "Bearer fake-jwt")
         finally:
             os.unlink(key_path)
 

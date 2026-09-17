@@ -151,23 +151,51 @@ def load_mock_templates_and_orders() -> Tuple[Dict[str, Dict[str, str]], Dict[st
     return modules, orders
 
 
+def _read_streamlit_secrets_section(section: str) -> Dict[str, str]:
+    """Read a `[section]` table via Streamlit's own secrets resolver.
+
+    `st.secrets` transparently checks the global `~/.streamlit/secrets.toml`
+    (where governance requires this project's secrets file to live) as well
+    as any project-local `.streamlit/secrets.toml`. This function never opens,
+    reads, or logs the file itself — it only calls Streamlit's own API and
+    returns the parsed section as a plain dict.
+    """
+    try:
+        import streamlit as st
+
+        if section in st.secrets:
+            return dict(st.secrets[section])
+    except Exception:
+        # No secrets file configured, not running under Streamlit, or the
+        # section is absent -- all treated the same as "not configured".
+        pass
+    return {}
+
+
 def get_dataloader_config() -> Dict[str, str]:
     """
-    Parses dataloader configuration from .streamlit/secrets.toml or environment variables.
-    Never prints or logs secret contents.
+    Parses dataloader configuration from Streamlit secrets (global
+    ~/.streamlit/secrets.toml or project .streamlit/secrets.toml) or
+    environment variables. Never prints or logs secret contents.
     """
     config: Dict[str, str] = {}
 
-    # Check secrets.toml if available
-    secrets_file = os.path.join(".streamlit", "secrets.toml")
-    if os.path.exists(secrets_file):
-        try:
-            import toml
-            data = toml.load(secrets_file)
-            if "dataloader" in data:
-                config.update(data["dataloader"])
-        except Exception:
-            pass
+    # Preferred path: Streamlit's own secrets resolver (checks the user's
+    # home directory first, per this project's secrets-governance rule).
+    config.update(_read_streamlit_secrets_section("dataloader"))
+
+    # Fallback for non-Streamlit contexts (e.g. plain scripts/tests) that
+    # still keep a project-local .streamlit/secrets.toml.
+    if not config:
+        secrets_file = os.path.join(".streamlit", "secrets.toml")
+        if os.path.exists(secrets_file):
+            try:
+                import toml
+                data = toml.load(secrets_file)
+                if "dataloader" in data:
+                    config.update(data["dataloader"])
+            except Exception:
+                pass
 
     # Environment variables override or supplement
     env_keys = [

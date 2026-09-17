@@ -46,11 +46,26 @@ def _env_prefix(alias: str) -> str:
 
 
 def _load_secrets_section(alias: str) -> dict:
-    """Read `[alias]` (or `[models.alias]`) from `.streamlit/secrets.toml`.
+    """Read the `[alias]` section (e.g. `[gpt52]`) via Streamlit's secrets resolver.
 
-    Returns an empty dict if the file, the `toml` package, or the section is
-    absent. Never logs the file's contents.
+    Each supported model has its own top-level section in secrets.toml,
+    named exactly after its alias (e.g. `[gpt52]`, `[gpt4o]`, `[local1]`).
+    Prefers `st.secrets`, which transparently checks the global
+    `~/.streamlit/secrets.toml` (where governance requires this project's
+    secrets file to live) as well as any project-local
+    `.streamlit/secrets.toml`. Never opens, reads, or logs the file itself
+    outside of calling Streamlit's own API. Falls back to a project-local
+    `.streamlit/secrets.toml` read (for non-Streamlit contexts such as
+    scripts/tests) if Streamlit secrets are unavailable.
     """
+    try:
+        import streamlit as st
+
+        if alias in st.secrets and isinstance(st.secrets[alias], dict):
+            return dict(st.secrets[alias])
+    except Exception:
+        pass
+
     if not _SECRETS_PATH.exists():
         return {}
     try:
@@ -63,9 +78,6 @@ def _load_secrets_section(alias: str) -> dict:
         return {}
     if alias in data and isinstance(data[alias], dict):
         return data[alias]
-    models_section = data.get("models", {})
-    if isinstance(models_section, dict) and isinstance(models_section.get(alias), dict):
-        return models_section[alias]
     return {}
 
 
