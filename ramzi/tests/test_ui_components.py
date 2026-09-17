@@ -166,6 +166,71 @@ class TestTrackCComponents(unittest.TestCase):
         pdf_rejected = generate_handout_pdf(packet)
         self.assertTrue(pdf_rejected.startswith(b"%PDF"))
 
+    def test_streamlit_app_headless_launch_and_generate(self):
+        """Simulate Streamlit clinician review app execution and packet generation."""
+        from streamlit.testing.v1 import AppTest
+
+        at = AppTest.from_file("../app/clinician_ui.py")
+        at.run()
+        self.assertEqual(len(at.exception), 0, f"AppTest raised exceptions on launch: {at.exception}")
+
+        # Click Generate Instructions
+        gen_btn = None
+        for b in at.button:
+            if "Generate" in b.label:
+                gen_btn = b
+                break
+        self.assertIsNotNone(gen_btn, "Generate Instructions button not found in sidebar")
+        gen_btn.click().run()
+        self.assertEqual(len(at.exception), 0, f"AppTest raised exceptions on generate: {at.exception}")
+
+        # Verify 4-way comparative pane rendered
+        markdown_texts = [m.value for m in at.markdown]
+        self.assertTrue(any("1. Original Clinical Orders" in t for t in markdown_texts))
+        self.assertTrue(any("2. Simplified English" in t for t in markdown_texts))
+        self.assertTrue(any("3. Spanish Handout" in t for t in markdown_texts))
+        self.assertTrue(any("4. Back-Translated English" in t for t in markdown_texts))
+
+        # Verify action buttons exist
+        button_labels = [b.label for b in at.button]
+        self.assertTrue(any("Save & Check Edits" in l for l in button_labels))
+        self.assertTrue(any("Approve & Publish" in l for l in button_labels))
+        self.assertTrue(any("Reject & Log Drift" in l for l in button_labels))
+
+    def test_streamlit_app_inline_edit_and_approve(self):
+        """Simulate Streamlit inline editing, re-checking, and approval gate."""
+        from streamlit.testing.v1 import AppTest
+
+        at = AppTest.from_file("../app/clinician_ui.py")
+        at.run()
+        for b in at.button:
+            if "Generate" in b.label:
+                b.click().run()
+                break
+
+        # Edit text in inline clinical editor
+        txt_area = None
+        for t in at.text_area:
+            if t.key == "txt_clinician_en":
+                txt_area = t
+                break
+        self.assertIsNotNone(txt_area, "Inline editor text area not found")
+        txt_area.input("Updated clinician verified instructions: 200 mg and 100.4°F.").run()
+
+        # Save & check edits
+        for b in at.button:
+            if "Save & Check Edits" in b.label:
+                b.click().run()
+                break
+        self.assertEqual(len(at.exception), 0)
+
+        # Approve & publish
+        for b in at.button:
+            if "Approve & Publish" in b.label:
+                b.click().run()
+                break
+        self.assertEqual(len(at.exception), 0)
+
 
 if __name__ == "__main__":
     unittest.main()
