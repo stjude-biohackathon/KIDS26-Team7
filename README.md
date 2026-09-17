@@ -13,6 +13,38 @@
 
 Naming the tools and stack early helps the team lead create useful roles and divide work realistically. It is fine to revise this section as the project develops.
 
+## Run the combined Phase 1 application
+
+The integrated application lives at the repository root. It combines Kartik's
+Track A pipeline, Nima's Track B data/storage/PDF modules, and Ramzi's Track C UI.
+The participant directories remain unchanged reference copies.
+
+From `KIDS26-Team7/`, using the existing local environment:
+
+```bash
+kartik/venv/bin/python -m streamlit run app/clinician_ui.py
+kartik/venv/bin/python -B -m unittest discover -s tests -v
+```
+
+For a fresh environment, create `.venv`, install `requirements.txt`, and use that
+interpreter for the same commands:
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python -m streamlit run app/clinician_ui.py
+```
+
+Phase 1 explicitly uses synthetic in-memory data and supplied mock bilingual text,
+even when live credentials are configured. Review history lasts for the browser
+session; records and generated PDF bytes are not saved to server-side data files.
+Some supplied demo paragraphs omit required order values. The app displays those
+failures and blocks approval until checks and authorized Spanish review are resolved.
+English edits create a new pending revision and invalidate the previous translations.
+
+See [the integration handoff](docs/phase1_integration.md) for ownership, interface
+changes, remaining fixture limitations, and the boundary before live integrations.
+
 ## Background
 
 After a clinic visit, often late in the day, at the end of a long and stressful encounter, families are handed a large volume of instructions verbally and on paper in one compressed window. In pediatric hematology-oncology and sickle cell care, that volume is high and consequential: opioid and supportive-medication schedules, hydration and home-care measures, and specific "when to call" or "when to return to the ER" thresholds. This is precisely the moment families are least able to absorb and retain detail, and they leave without a clear, durable, organized version of the plan they can return to at home when they are calmer and actually trying to follow it. For the large share of families whose primary language is Spanish, a language and health-literacy barrier compounds the problem.

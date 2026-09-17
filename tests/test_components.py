@@ -1,6 +1,10 @@
 import sys
 import os
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+# Ensure project root is in sys.path
+_project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
 
 import unittest
 from datetime import datetime, timezone
@@ -139,6 +143,144 @@ class TestInstructionPacketSchema(unittest.TestCase):
 
         packet.status = "REJECTED_DRIFT"
         self.assertEqual(get_physician_annotation(packet), "Rejected by physician")
+
+
+class TestGoldLibraryStorage(unittest.TestCase):
+    def setUp(self):
+        self.library = []
+
+        from schemas.instruction_packet import ClinicalOrders, MedicationOrder, InstructionPacket
+        self.orders = ClinicalOrders(
+            patient_id="SYN-PED-002",
+            diagnosis="Pediatric Fever & Neutropenia",
+            medications=[MedicationOrder(name="Cefepime", dose="1000 mg", route="IV", frequency="q8h")],
+            urgent_fever_threshold="100.4°F",
+            emergency_fever_threshold="101.0°F",
+            daytime_phone="901-595-3300",
+            after_hours_phone="901-595-3300",
+        )
+        self.packet = InstructionPacket(
+            packet_id="PKT-TEST-FN01",
+            condition="fever_neutropenia",
+            clinical_orders=self.orders,
+            simplified_en="Seek emergency care immediately if fever reaches 100.4°F.",
+            translated_es="Busque atención de emergencia de inmediato si la fiebre llega a 100.4°F.",
+            back_translated_en="Seek emergency care immediately if fever reaches 100.4°F.",
+            status="APPROVED",
+        )
+
+    def test_save_and_load_gold_library(self):
+        from storage.gold_library import save_to_gold_library, load_gold_records
+
+        save_to_gold_library(self.packet, library=self.library)
+        self.assertEqual(len(self.library), 1)
+
+        records = load_gold_records(library=self.library)
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].packet_id, "PKT-TEST-FN01")
+        self.assertEqual(records[0].status, "APPROVED")
+        self.assertEqual(records[0].physician_decision, "Approved by physician")
+
+    def test_gold_library_append_immutability(self):
+        from storage.gold_library import save_gold_record, load_gold_records
+
+        save_gold_record(self.packet, library=self.library)
+
+        # Second packet
+        self.packet.packet_id = "PKT-TEST-FN02"
+        self.packet.status = "REJECTED_DRIFT"
+        self.packet.rejection_reason = "Altered fever threshold"
+        save_gold_record(self.packet, library=self.library)
+
+        records = load_gold_records(library=self.library)
+        self.assertEqual(len(records), 2)
+        self.assertEqual(records[0].packet_id, "PKT-TEST-FN01")
+        self.assertEqual(records[0].status, "APPROVED")
+        self.assertEqual(records[1].packet_id, "PKT-TEST-FN02")
+        self.assertEqual(records[1].status, "REJECTED_DRIFT")
+        self.assertEqual(records[1].rejection_reason, "Altered fever threshold")
+
+
+class TestPdfGenerator(unittest.TestCase):
+    def setUp(self):
+        from schemas.instruction_packet import ClinicalOrders, MedicationOrder, InstructionPacket
+        self.orders = ClinicalOrders(
+            patient_id="SYN-PED-003",
+            diagnosis="Sickle Cell Pain Crisis",
+            medications=[MedicationOrder(name="Ibuprofen", dose="200 mg", route="oral", frequency="q6h")],
+            urgent_fever_threshold="100.4°F",
+            emergency_fever_threshold="101.0°F",
+            daytime_phone="901-595-3300",
+            after_hours_phone="901-595-3300",
+        )
+        self.packet = InstructionPacket(
+            packet_id="PKT-PDF-001",
+            condition="sickle_cell_pain",
+            clinical_orders=self.orders,
+            simplified_en="Give your child 200 mg of Ibuprofen every 6 hours with food.",
+            translated_es="Dé a su hijo 200 mg de Ibuprofeno cada 6 horas con comida.",
+            back_translated_en="Give your child 200 mg of Ibuprofen every 6 hours with food.",
+            status="APPROVED",
+        )
+
+    def test_pdf_generation_approved(self):
+        from exporters.pdf_generator import create_bilingual_pdf, generate_pdf_handout
+
+        pdf_bytes = create_bilingual_pdf(self.packet)
+        self.assertIsInstance(pdf_bytes, bytes)
+        self.assertTrue(len(pdf_bytes) > 0)
+        self.assertTrue(pdf_bytes.startswith(b"%PDF-"))
+
+        pdf_alias = generate_pdf_handout(self.packet)
+        self.assertTrue(pdf_alias.startswith(b"%PDF-"))
+
+    def test_pdf_generation_edited_and_approved(self):
+        from exporters.pdf_generator import create_bilingual_pdf
+
+        self.packet.status = "EDITED_AND_APPROVED"
+        self.packet.edited_by_physician = True
+        pdf_bytes = create_bilingual_pdf(self.packet)
+        self.assertIsInstance(pdf_bytes, bytes)
+        self.assertTrue(pdf_bytes.startswith(b"%PDF-"))
+
+    def test_pdf_generation_rejected_drift(self):
+        from exporters.pdf_generator import create_bilingual_pdf
+
+        self.packet.status = "REJECTED_DRIFT"
+        self.packet.rejection_reason = "Dosage modified from 200 mg to 400 mg"
+        self.packet.rejection_category = "Unsafe dosage alteration"
+        pdf_bytes = create_bilingual_pdf(self.packet)
+        self.assertIsInstance(pdf_bytes, bytes)
+        self.assertTrue(pdf_bytes.startswith(b"%PDF-"))
+
+    def test_pdf_treats_review_notes_and_metadata_as_plain_text(self):
+        from exporters.pdf_generator import create_bilingual_pdf
+
+        self.packet.status = "REJECTED_DRIFT"
+        self.packet.rejection_reason = "Synthetic note: <b> is text, not formatting & markup."
+        self.packet.clinical_orders.diagnosis = "Synthetic <i> label & example"
+        self.packet.module_version = "v1 <test>"
+        self.assertTrue(create_bilingual_pdf(self.packet).startswith(b"%PDF-"))
+
+
+class TestMockDataLoader(unittest.TestCase):
+    def test_mock_loader_templates_and_orders(self):
+        from storage.github_loader import load_mock_templates_and_orders
+
+        modules, orders = load_mock_templates_and_orders()
+        self.assertIn("sickle_cell_pain", modules)
+        self.assertIn("fever_neutropenia", modules)
+        self.assertIn("chemo_nausea_hydration", modules)
+
+        self.assertIn("sickle_cell_pain", orders)
+        self.assertIn("fever_neutropenia", orders)
+        self.assertIn("chemo_nausea_hydration", orders)
+
+        from schemas.instruction_packet import ClinicalOrders
+        for cond, order_obj in orders.items():
+            self.assertIsInstance(order_obj, ClinicalOrders)
+            self.assertTrue(len(order_obj.medications) > 0)
+            self.assertTrue(order_obj.urgent_fever_threshold)
 
 
 if __name__ == "__main__":

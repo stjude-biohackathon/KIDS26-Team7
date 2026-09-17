@@ -3,21 +3,22 @@ import unittest
 
 from app import mock_components as ui
 from schemas import instruction_packet as schema
-from nima.schemas import instruction_packet as authority
+from pipeline import orchestrator
+from storage import github_loader
 
 
 class SchemaContractTests(unittest.TestCase):
-    def test_shared_schema_matches_authority(self):
+    def test_all_tracks_use_the_canonical_schema(self):
         for name in ('MedicationOrder', 'ClinicalOrders', 'SafetyJudgeResult',
                      'EvaluationMetrics', 'InstructionPacket'):
             with self.subTest(model=name):
-                self.assertEqual(getattr(schema, name).model_json_schema(),
-                                 getattr(authority, name).model_json_schema())
                 self.assertIs(getattr(ui, name), getattr(schema, name))
+        self.assertIs(orchestrator.InstructionPacket, schema.InstructionPacket)
+        self.assertIs(github_loader.ClinicalOrders, schema.ClinicalOrders)
 
     def test_canonical_orders_survive_ui_pipeline_and_serialization(self):
         orders = schema.ClinicalOrders(
-            patient_id='SYN-CONTRACT', age='9 years', diagnosis='Synthetic fixture',
+            patient_id='SYN-PED-004', age='9 years', diagnosis='Synthetic fixture',
             urgent_fever_threshold='100.6°F', emergency_fever_threshold='102.2°F',
             daytime_phone='202-555-0101', after_hours_phone='202-555-0102',
             emergency_phone='911',
@@ -28,7 +29,7 @@ class SchemaContractTests(unittest.TestCase):
             self.assertIn(value, tokens)
         packet = ui.run_mock_pipeline('sickle_cell_pain', 'v1.2.0', orders)
         self.assertIsInstance(packet, schema.InstructionPacket)
-        restored = authority.InstructionPacket.model_validate_json(packet.model_dump_json())
+        restored = schema.InstructionPacket.model_validate_json(packet.model_dump_json())
         self.assertEqual(restored.clinical_orders.model_dump(), orders.model_dump())
         self.assertTrue(restored.original_clinical_text)
         self.assertIsNotNone(restored.evaluation_metrics)

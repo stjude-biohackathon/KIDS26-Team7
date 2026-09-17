@@ -1,2 +1,21 @@
 .DS_Store
 ramzi/46f1caff-2019-4854-ad51-06e60d4bcf2e
+
+# Local configuration, credentials, and runtime data (all participant folders).
+.streamlit/
+*.pem
+*.key
+*.token
+.env
+.env.*
+!.env.example
+data/
+
+# Environments and generated Python files.
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
