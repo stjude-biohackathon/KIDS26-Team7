@@ -1,2 +1,7 @@
 .DS_Store
 ramzi/46f1caff-2019-4854-ad51-06e60d4bcf2e
+app/__pycache__/
+exporters/__pycache__/
+pipeline/__pycache__/
+schemas/__pycache__/
+storage/__pycache__/
