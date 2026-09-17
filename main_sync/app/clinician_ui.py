@@ -72,7 +72,7 @@ except ImportError:
 
 # Optional live module hooks for Phase 2/3 sync points
 try:
-    from storage.github_loader import fetch_remote_templates_and_orders
+    from storage.github_loader import fetch_remote_templates_and_orders, is_github_app_configured
     HAS_LIVE_LOADER = True
 except ImportError:
     HAS_LIVE_LOADER = False
@@ -94,6 +94,32 @@ try:
     HAS_LIVE_PDF = True
 except ImportError:
     HAS_LIVE_PDF = False
+
+
+# ---------------------------------------------------------------------------
+# In-Memory Data Source Resolution (specs/03 Section 2.1)
+# ---------------------------------------------------------------------------
+def _is_live_data_configured() -> bool:
+    """True only when GitHub App credentials are actually present."""
+    if not HAS_LIVE_LOADER:
+        return False
+    try:
+        return is_github_app_configured()
+    except Exception:
+        return False
+
+
+@st.cache_data(show_spinner=False)
+def _load_templates_and_orders():
+    """Fetch clinical templates/orders once per cache lifetime; zero disk writes.
+
+    Falls back to the bundled mock fixtures if the live loader is unavailable
+    or the GitHub App is not configured/reachable (`github_loader` itself
+    already performs this fallback for network failures).
+    """
+    if HAS_LIVE_LOADER:
+        return fetch_remote_templates_and_orders()
+    return MOCK_MODULES, MOCK_ORDERS
 
 
 # ---------------------------------------------------------------------------
@@ -181,6 +207,8 @@ if "pdf_bytes" not in st.session_state:
     st.session_state["pdf_bytes"] = None
 if "txt_clinician_en" not in st.session_state:
     st.session_state["txt_clinician_en"] = ""
+if "live_pipeline_notice" not in st.session_state:
+    st.session_state["live_pipeline_notice"] = False
 
 
 # ---------------------------------------------------------------------------
@@ -266,25 +294,28 @@ with st.sidebar:
 
     st.divider()
     st.subheader("2. In-Memory Data Stream")
-    
+
+    live_data_active = _is_live_data_configured()
     col_badge, col_ref = st.columns([4, 1])
     with col_badge:
-        if HAS_LIVE_LOADER:
+        if live_data_active:
             st.markdown(
-                "**Source:** ☁️ GitHub App (In-Memory)<br/>"
+                "**Source:** ☁️ GitHub App (In-Memory, No Local Copy)<br/>"
                 "<small style='color: #059669;'>Zero local copies • In-memory stream</small>",
                 unsafe_allow_html=True,
             )
         else:
             st.markdown(
-                "**Source:** ☁️ GitHub App (In-Memory)<br/>"
-                "<small style='color: #059669;'>Zero local copies • In-memory stream</small>",
+                "**Source:** 🧪 Offline Mock Fixtures<br/>"
+                "<small style='color: #B45309;'>GitHub App not configured — using bundled synthetic data</small>",
                 unsafe_allow_html=True,
             )
     with col_ref:
         if st.button("🔄", help="Clear cache and reload remote protocols from GitHub App"):
             st.cache_data.clear()
             st.rerun()
+
+    live_templates, live_orders = _load_templates_and_orders()
 
     st.divider()
     st.subheader("3. Protocol & Module Version")
@@ -310,8 +341,8 @@ with st.sidebar:
     st.divider()
     st.subheader("4. Clinical Orders Customization")
 
-    # Load base mock order for the selected condition
-    base_order = MOCK_ORDERS.get(condition, MOCK_ORDERS["sickle_cell_pain"])
+    # Load base order for the selected condition (live-fetched or mock fallback)
+    base_order = live_orders.get(condition, live_orders.get("sickle_cell_pain") or MOCK_ORDERS["sickle_cell_pain"])
     
     patient_id = st.text_input("Patient ID (De-identified):", value=base_order.patient_id)
     age = st.text_input("Patient Age:", value=base_order.age or "8 years old")
@@ -389,14 +420,32 @@ with st.sidebar:
     st.divider()
     if st.button("🚀 Generate Instructions", type="primary", use_container_width=True):
         with st.spinner("Processing plain-language simplification, quality gates, and translations..."):
-            packet = run_mock_pipeline(
-                condition=condition,
-                module_version=module_version,
-                orders=active_orders,
-                llm1_model=selected_llm1,
-                llm2_model=selected_llm2,
-                drift_mode=drift_mode,
-            )
+            raw_template = live_templates.get(condition, {}).get(module_version, "")
+            packet = None
+            live_failed = False
+            # The drift simulator injects errors into the mock templates directly;
+            # it is not meaningful to ask a live model to simplify a corrupted
+            # template, so drift tests always use the offline mock pipeline.
+            if HAS_LIVE_PIPELINE and drift_mode == "None" and raw_template.strip():
+                try:
+                    orchestrator = PipelineOrchestrator(llm1_model=selected_llm1, llm2_model=selected_llm2)
+                    packet = orchestrator.generate_live(
+                        raw_template, active_orders, module_version=module_version, condition=condition,
+                    )
+                except Exception:
+                    live_failed = True
+                    packet = None
+
+            if packet is None:
+                packet = run_mock_pipeline(
+                    condition=condition,
+                    module_version=module_version,
+                    orders=active_orders,
+                    llm1_model=selected_llm1,
+                    llm2_model=selected_llm2,
+                    drift_mode=drift_mode,
+                )
+            st.session_state["live_pipeline_notice"] = live_failed
             st.session_state["current_packet"] = packet
             st.session_state["clean_backup_packet"] = copy.deepcopy(packet)
             st.session_state["edits_checked_banner"] = False
@@ -416,6 +465,11 @@ packet: Optional[InstructionPacket] = st.session_state.get("current_packet")
 if packet is None:
     st.info("👈 Select parameters in the sidebar and click **'🚀 Generate Instructions'** to begin.")
 else:
+    if st.session_state.get("live_pipeline_notice"):
+        st.warning(
+            "⚠️ Live model call unavailable (unconfigured model or endpoint error); "
+            "showing offline mock output instead."
+        )
     # Patient Banner & Status Line
     col_info, col_stat = st.columns([3, 1])
     with col_info:
@@ -566,31 +620,46 @@ else:
     with btn_col1:
         if st.button("✏️ Save & Check Edits", use_container_width=True, help="Re-runs readability and verbatim checks while keeping status PENDING"):
             edited_text = st.session_state.get("txt_clinician_en", packet.simplified_en)
-            packet.simplified_en = edited_text
-            packet.edited_by_physician = True
-            
-            # Re-evaluate FKGL and verbatim checks
-            new_metrics = evaluate_text_verbatim_and_fkgl(edited_text, packet.clinical_orders)
-            packet.evaluation_metrics = new_metrics
-            
-            # In mock mode, re-run translation updates
-            packet.translated_es = (
-                f"[Traducción actualizada con ediciones del médico]:\n\n"
-                + edited_text.replace("Here is your child's care plan", "Este es el plan de cuidado de su hijo")
-                .replace("Give", "Dé")
-                .replace("Call immediately", "Llame de inmediato")
-            )
-            packet.back_translated_en = (
-                f"[Back-translation of updated physician edits]:\n\n"
-                + edited_text
-            )
-            
-            # Governance Invariant: status remains PENDING
-            packet.status = "PENDING"
-            packet.physician_decision = "Pending physician review"
+
+            revised_packet = None
+            if HAS_LIVE_PIPELINE:
+                try:
+                    orchestrator = PipelineOrchestrator(llm1_model=selected_llm1, llm2_model=selected_llm2)
+                    revised_packet = orchestrator.recheck_edits_live(packet, edited_text)
+                except Exception:
+                    revised_packet = None
+
+            if revised_packet is not None:
+                packet = revised_packet
+            else:
+                packet.simplified_en = edited_text
+                packet.edited_by_physician = True
+
+                # Re-evaluate FKGL and verbatim checks
+                new_metrics = evaluate_text_verbatim_and_fkgl(edited_text, packet.clinical_orders)
+                packet.evaluation_metrics = new_metrics
+
+                # Offline fallback: re-run mock translation updates
+                packet.translated_es = (
+                    f"[Traducción actualizada con ediciones del médico]:\n\n"
+                    + edited_text.replace("Here is your child's care plan", "Este es el plan de cuidado de su hijo")
+                    .replace("Give", "Dé")
+                    .replace("Call immediately", "Llame de inmediato")
+                )
+                packet.back_translated_en = (
+                    f"[Back-translation of updated physician edits]:\n\n"
+                    + edited_text
+                )
+
+                # Governance Invariant: status remains PENDING
+                packet.status = "PENDING"
+                packet.physician_decision = "Pending physician review"
+
+            st.session_state["current_packet"] = packet
             st.session_state["edits_checked_banner"] = True
             st.session_state["pdf_bytes"] = None
             st.rerun()
+
 
     # 2. Approve & publish (Sole Approval Gate)
     with btn_col2:

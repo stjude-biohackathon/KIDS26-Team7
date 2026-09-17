@@ -3,7 +3,7 @@
 from pathlib import Path
 import sys
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -184,6 +184,94 @@ class MockPipelineTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             pipeline.recheck_edits(packet, " \n ")
         self.assertEqual(packet.model_dump(), before)
+
+
+class LivePipelineTests(unittest.TestCase):
+    """Phase 2 live pipeline; OpenAI calls are mocked, no network/credentials used."""
+
+    def _patched_clients(self, llm1_responses, llm2_responses):
+        """Return a patch context yielding sequential canned chat responses."""
+        llm1_client = MagicMock()
+        llm1_client.chat.completions.create.side_effect = [
+            MagicMock(choices=[MagicMock(message=MagicMock(content=text))])
+            for text in llm1_responses
+        ]
+        llm2_client = MagicMock()
+        llm2_client.chat.completions.create.side_effect = [
+            MagicMock(choices=[MagicMock(message=MagicMock(content=text))])
+            for text in llm2_responses
+        ]
+
+        def fake_get_client(alias):
+            return (llm1_client, "llm1-deploy") if alias == "gpt52" else (llm2_client, "llm2-deploy")
+
+        return patch("pipeline.orchestrator.get_client", side_effect=fake_get_client)
+
+    def test_generate_live_calls_llm1_and_llm2_and_returns_pending_packet(self):
+        judge_json = (
+            '{"overall_verdict": "PASS", "factual_drift_detected": false, '
+            '"omitted_red_flags": [], "contradictory_advice": [], '
+            '"clinical_risk_score": 0.0, "explanation": "ok"}'
+        )
+        orders = synthetic_orders(medications=[MedicationOrder(name="Demo", dose="5 mg")])
+        with self._patched_clients(
+            llm1_responses=["Give 5 mg by mouth daily.", "Dé 5 mg por via oral cada dia."],
+            llm2_responses=["Give 5 mg by mouth every day.", judge_json],
+        ):
+            pipeline = PipelineOrchestrator(llm1_model="gpt52", llm2_model="gpt4o")
+            packet = pipeline.generate_live(
+                "Administer 5 mg orally daily.", orders, module_version="v1.0.0", condition="demo"
+            )
+        self.assertEqual(packet.simplified_en, "Give 5 mg by mouth daily.")
+        self.assertEqual(packet.translated_es, "Dé 5 mg por via oral cada dia.")
+        self.assertEqual(packet.back_translated_en, "Give 5 mg by mouth every day.")
+        self.assertEqual(packet.evaluation_metrics.safety_judge.overall_verdict, "PASS")
+        self.assertEqual(packet.status, "PENDING")
+
+    def test_generate_live_safety_judge_failure_is_flagged_not_raised(self):
+        orders = synthetic_orders(medications=[MedicationOrder(name="Demo", dose="5 mg")])
+        with self._patched_clients(
+            llm1_responses=["Give 5 mg by mouth daily.", "Dé 5 mg por via oral cada dia."],
+            llm2_responses=["Give 5 mg by mouth every day.", "not valid json"],
+        ):
+            pipeline = PipelineOrchestrator(llm1_model="gpt52", llm2_model="gpt4o")
+            packet = pipeline.generate_live(
+                "Administer 5 mg orally daily.", orders, module_version="v1.0.0", condition="demo"
+            )
+        self.assertEqual(packet.evaluation_metrics.safety_judge.overall_verdict, "FLAGGED_FOR_REVIEW")
+
+    def test_recheck_edits_live_returns_new_pending_revision(self):
+        judge_json = '{"overall_verdict": "NEEDS_REVIEW", "explanation": "recheck"}'
+        orders = synthetic_orders(medications=[MedicationOrder(name="Demo", dose="5 mg")])
+        with self._patched_clients(
+            llm1_responses=["Give 5 mg by mouth daily.", "Dé 5 mg por via oral cada dia."],
+            llm2_responses=["Give 5 mg by mouth every day.", judge_json],
+        ):
+            pipeline = PipelineOrchestrator(llm1_model="gpt52", llm2_model="gpt4o")
+            packet = pipeline.generate_live(
+                "Administer 5 mg orally daily.", orders, module_version="v1.0.0", condition="demo"
+            )
+
+        with self._patched_clients(
+            llm1_responses=["Dé 15 mg por via oral cada dia."],
+            llm2_responses=["Give 15 mg by mouth every day.", judge_json],
+        ):
+            revision = pipeline.recheck_edits_live(packet, "Give 15 mg by mouth daily.")
+
+        self.assertNotEqual(revision.packet_id, packet.packet_id)
+        self.assertEqual(revision.simplified_en, "Give 15 mg by mouth daily.")
+        self.assertEqual(revision.translated_es, "Dé 15 mg por via oral cada dia.")
+        self.assertEqual(revision.status, "PENDING")
+        self.assertTrue(revision.edited_by_physician)
+        self.assertIsNone(revision.physician_decision)
+
+    def test_recheck_edits_live_rejects_blank_edits(self):
+        pipeline = PipelineOrchestrator()
+        packet = pipeline.generate(
+            "The cat sat on the mat.", synthetic_orders(), module_version="v1", condition="demo"
+        )
+        with self.assertRaises(ValueError):
+            pipeline.recheck_edits_live(packet, " \n ")
 
 
 class EvaluationTests(unittest.TestCase):

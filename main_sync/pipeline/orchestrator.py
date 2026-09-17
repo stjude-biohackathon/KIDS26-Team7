@@ -1,4 +1,5 @@
-"""Track A's deterministic, offline pipeline for the Sync 1 mock loop."""
+"""Track A's pipeline: the Phase 1 deterministic offline path plus Phase 2's
+live multi-LLM path (`generate_live`/`recheck_edits_live`)."""
 
 from __future__ import annotations
 
@@ -6,8 +7,9 @@ from datetime import datetime, timezone
 from string import Template
 from uuid import uuid4
 
+from pipeline import live_llm
 from pipeline.evaluator import check_verbatim, evaluate_text
-from pipeline.llms import AVAILABLE_MODELS
+from pipeline.llms import AVAILABLE_MODELS, get_client
 from schemas.instruction_packet import ClinicalOrders, EvaluationMetrics, InstructionPacket
 
 
@@ -138,6 +140,99 @@ class PipelineOrchestrator:
         revision.evaluation_metrics.safety_judge.explanation += (
             " Previous translations invalidated by edit recheck."
         )
+        revision.status = "PENDING"
+        revision.edited_by_physician = True
+        revision.physician_decision = None
+        revision.rejection_reason = None
+        revision.rejection_category = None
+        revision.clinician_notes = None
+        revision.reviewed_at = None
+        return revision
+
+    def generate_live(
+        self,
+        composite_template_text: str,
+        orders: ClinicalOrders,
+        *,
+        module_version: str,
+        condition: str,
+    ) -> InstructionPacket:
+        """Phase 2: run the real LLM1/LLM2 pipeline instead of binding templates.
+
+        LLM1 (`self.llm1_model`) simplifies the clinical text and translates it
+        to Spanish. LLM2 (`self.llm2_model`) back-translates the Spanish pane
+        and runs the Safety Judge audit. FKGL/verbatim telemetry is still
+        computed locally by `pipeline.evaluator`, per specs/01 Section 2.2 —
+        only the Safety Judge verdict comes from the live LLM2 call.
+
+        Raises `ValueError` if inputs are missing/invalid, or if the LLM1
+        simplification/translation calls fail; the Safety Judge call alone is
+        resilient (specs/01 Section 2.3) and never raises.
+        """
+        if not all(value.strip() for value in (
+            composite_template_text, module_version, condition, orders.order_version
+        )):
+            raise ValueError("Source text, condition, and module/order versions are required.")
+        saved_orders = orders.model_copy(deep=True)
+
+        llm1_client, llm1_deployment = get_client(self.llm1_model)
+        english = live_llm.simplify_to_plain_language(
+            llm1_client, llm1_deployment, composite_template_text, saved_orders
+        )
+        spanish = live_llm.translate_to_spanish(llm1_client, llm1_deployment, english)
+
+        llm2_client, llm2_deployment = get_client(self.llm2_model)
+        back = live_llm.back_translate_to_english(llm2_client, llm2_deployment, spanish)
+
+        metrics = evaluate_text(english, saved_orders)
+        metrics.safety_judge = live_llm.judge_safety(
+            llm2_client, llm2_deployment, composite_template_text, english, saved_orders
+        )
+
+        return InstructionPacket(
+            packet_id=str(uuid4()),
+            condition=condition,
+            module_version=module_version,
+            order_version=saved_orders.order_version,
+            original_clinical_text=composite_template_text,
+            clinical_orders=saved_orders,
+            simplified_en=english,
+            translated_es=spanish,
+            back_translated_en=back,
+            evaluation_metrics=metrics,
+            status="PENDING",
+        )
+
+    def recheck_edits_live(
+        self, packet: InstructionPacket, edited_en: str
+    ) -> InstructionPacket:
+        """Phase 2: re-translate/re-judge a physician's edit via live LLMs.
+
+        Returns a new pending revision; the caller keeps the original packet
+        (same contract as `recheck_edits`). Unlike the offline path, the
+        bilingual panes are regenerated rather than left empty.
+        """
+        if not edited_en.strip():
+            raise ValueError("Edited instruction text must not be empty.")
+        revision = packet.model_copy(deep=True)
+        revision.packet_id = str(uuid4())
+        revision.created_at = datetime.now(timezone.utc).isoformat()
+        revision.simplified_en = edited_en
+
+        llm1_client, llm1_deployment = get_client(self.llm1_model)
+        revision.translated_es = live_llm.translate_to_spanish(llm1_client, llm1_deployment, edited_en)
+
+        llm2_client, llm2_deployment = get_client(self.llm2_model)
+        revision.back_translated_en = live_llm.back_translate_to_english(
+            llm2_client, llm2_deployment, revision.translated_es
+        )
+
+        metrics = evaluate_text(edited_en, revision.clinical_orders)
+        metrics.safety_judge = live_llm.judge_safety(
+            llm2_client, llm2_deployment, revision.original_clinical_text, edited_en, revision.clinical_orders
+        )
+        revision.evaluation_metrics = metrics
+
         revision.status = "PENDING"
         revision.edited_by_physician = True
         revision.physician_decision = None

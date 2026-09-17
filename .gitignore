@@ -5,3 +5,4 @@ exporters/__pycache__/
 pipeline/__pycache__/
 schemas/__pycache__/
 storage/__pycache__/
+venv
