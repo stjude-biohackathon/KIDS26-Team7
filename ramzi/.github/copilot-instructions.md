@@ -4,39 +4,38 @@
 
 ### Environment Setup
 ```bash
-python -m venv venv
+python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 ```
 
 ### Application Execution
 ```bash
-streamlit run app/clinician_ui.py
+PYTHONPATH=. streamlit run app/clinician_ui.py
 ```
 
 ### Build & Syntax Validation
 ```bash
-python -m py_compile app/clinician_ui.py
-python -c "from schemas.instruction_packet import InstructionPacket; print('Schema OK')"
+python3 -m py_compile schemas/instruction_packet.py app/clinician_ui.py app/mock_components.py pipeline/*.py tests/*.py
+python3 -c "from schemas.instruction_packet import InstructionPacket; print('Schema OK')"
 ```
 
 ### Running Tests
 - **Full Test Suite:**
   ```bash
-  python tests/test_components.py
-  python tests/test_pipeline.py
-  python tests/test_github_loader.py
-  python tests/test_llm_config.py
+  PYTHONPATH=. python3 -m unittest discover tests
   ```
-- **Single Test Suite (Unittest or Pytest):**
+- **Single Test Suite:**
   ```bash
-  python -m unittest tests/test_pipeline.py
-  pytest tests/test_pipeline.py
+  PYTHONPATH=. python3 -m unittest tests/test_ui_components.py
+  PYTHONPATH=. python3 -m unittest tests/test_components.py
+  PYTHONPATH=. python3 -m unittest tests/test_pipeline.py
+  PYTHONPATH=. python3 -m unittest tests/test_llm_config.py
   ```
 - **Single Test Method:**
   ```bash
-  python -m unittest tests.test_pipeline.TestPipeline.test_verbatim_regex
-  pytest tests/test_pipeline.py -k "test_verbatim_regex"
+  PYTHONPATH=. python3 -m unittest tests.test_ui_components.TestTrackCComponents.test_verbatim_extraction_and_evaluation
+  PYTHONPATH=. python3 -m unittest tests.test_components.TestInstructionPacketSchema.test_clinical_orders_valid
   ```
 
 ---
@@ -66,9 +65,11 @@ The project is structured into three decoupled, spec-driven tracks around a cano
 ```
 
 ### Component Responsibilities & Data Flow
-1. **Canonical Schema (`schemas/instruction_packet.py`)**: Defines `InstructionPacket`, `ClinicalOrders`, `MedicationOrder`, `EvaluationMetrics`, and `SafetyJudgeResult`. All modules exchange data through this contract.
+1. **Canonical Schema (`schemas/instruction_packet.py`)**: Authoritative definition of `InstructionPacket`, `ClinicalOrders`, `MedicationOrder`, `EvaluationMetrics`, and `SafetyJudgeResult`. All tracks exchange data strictly via these models.
+   - `ClinicalOrders` uses: `age`, `urgent_fever_threshold`, `emergency_fever_threshold`, `daytime_phone`, `after_hours_phone`, `emergency_phone`.
+   - `InstructionPacket` uses: `original_clinical_text`, `evaluation_metrics`, `simplified_en`, `translated_es`, `back_translated_en`, `status`, `physician_decision`, `rejection_reason`, `rejection_category`, `edited_by_physician`, `reviewed_at`.
 2. **Track A — Pipeline & Safety (`pipeline/`)**:
-   - `pipeline/orchestrator.py`: Orchestrates multi-step LLM calls (LLM1 English simplification, LLM1 Spanish translation, LLM2 back-translation, LLM2 Safety Judge).
+   - `pipeline/orchestrator.py`: Multi-step LLM calls (LLM1 English simplification, LLM1 Spanish translation, LLM2 back-translation, LLM2 Safety Judge).
    - `pipeline/evaluator.py`: Computes Flesch-Kincaid Grade Level (FKGL target: 5.0–6.9) via `textstat` and extracts verbatim tokens (medication doses, fever limits, phone numbers) via regex to detect omissions.
    - `pipeline/llms.py`: Dynamic model dispatcher supporting `gpt52`, `gpt4o`, `gpt56luna`, `kimik3`, `copus5`, and `local` endpoints.
 3. **Track B — Data, Loader & Exporters (`storage/`, `exporters/`)**:
@@ -77,7 +78,7 @@ The project is structured into three decoupled, spec-driven tracks around a cano
    - `exporters/pdf_generator.py`: Generates 2-column bilingual print-ready PDF handouts with physician verification banners (`Approved by physician`, `Edited and approved by physician`, `Rejected by physician`).
 4. **Track C — Clinician UI/UX (`app/clinician_ui.py`)**:
    - Streamlit dashboard displaying 4 comparative review columns: Original Clinical Text, Simplified English, Spanish Handout, and Back-Translated English.
-   - Enforces action gates: "Save and check edits" (re-scores, keeps `PENDING`), "Approve & publish" (`APPROVED` or `EDITED_AND_APPROVED`), and "Reject & log drift" (`REJECTED_DRIFT`).
+   - Enforces action gates: "Save & Check Edits" (re-scores, keeps `PENDING`), "Approve & Publish" (`APPROVED` or `EDITED_AND_APPROVED`), and "Reject & Log Drift" (`REJECTED_DRIFT`).
 
 ---
 
@@ -94,23 +95,31 @@ The project is structured into three decoupled, spec-driven tracks around a cano
   - Doses: `r"(\d+(?:\.\d+)?\s*(?:mg|mL|mcg|g|tablets?|capsules?|drops?))"`
   - Temperatures: `r"(\d{2,3}(?:\.\d+)?\s*°?[FC])"`
   - Phone Numbers: `r"(\b(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b)"`
-  Every token in `orders` must appear verbatim in `simplified_en`. Mismatches populate `EvaluationMetrics.verbatim_mismatches`.
+  Every token in `ClinicalOrders` must appear verbatim in `simplified_en`. Mismatches populate `EvaluationMetrics.verbatim_mismatches`.
+- **Authorized Translation Gate**: All patient-facing Spanish guidance must be vetted by authorized personnel (or dual LLM translation + back-translation verification).
 - **Fail-Safe Safety Judge**: If the LLM2 Safety Judge API fails or times out, catch the exception and mark `overall_verdict="FLAGGED_FOR_REVIEW"` rather than crashing the workflow.
 
 ### 3. Streamlit State Invariants
-- **Widget State Binding**: Never assign directly to `st.session_state["txt_clinician_en"]` after `st.text_area(key="txt_clinician_en")` is instantiated. This causes `StreamlitWidgetAlreadyInstantiatedError`.
+- **`sys.path` Resolution**: Streamlit sets `sys.path[0]` to `app/`. Project root must be resolved and added to `sys.path` before top-level imports (`from schemas.instruction_packet import ...`).
+- **Widget State Binding**: Never assign directly to `st.session_state["txt_clinician_en"]` after `st.text_area(key="txt_clinician_en")` is instantiated to prevent `StreamlitWidgetAlreadyInstantiatedError`.
 - **Review Status Transition**:
-  - "Save and check edits" triggers re-evaluation and updates translation/back-translation, but **must keep status as `PENDING`**.
-  - Only "Approve & publish" sets status to `APPROVED` (if unmodified) or `EDITED_AND_APPROVED` (if modified).
+  - "Save & Check Edits" triggers re-evaluation and updates translation/back-translation, but **must keep status as `PENDING`**.
+  - Only "Approve & Publish" sets status to `APPROVED` (if unmodified) or `EDITED_AND_APPROVED` (if modified).
 
 ### 4. Zero-Disk Streaming & Privacy Governance
-- **Zero Disk Writes**: Never cache or write clinical instruction templates or synthetic patient data (`SYN-PED-xxx`) to disk. Data must stream in-memory through `storage/github_loader.py`.
+- **Zero Real Patient Data & Zero Disk Writes**: Use synthetic, de-identified fixtures only. Never cache or write clinical instruction templates or synthetic patient data (`SYN-PED-xxx`) to disk. Data must stream in-memory through `storage/github_loader.py`.
 - **Secrets Governance**:
-  - Do not commit `.streamlit/secrets.toml` or any credentials.
+  - Do not commit `.streamlit/secrets.toml` or any credentials. Instruct users to move `.streamlit` to their home directory or add to `.gitignore`.
   - Do not print, log, or commit private keys, JWTs, or API keys.
   - Do not commit `data/` directory contents.
 
-### 5. Git Branching Discipline
+### 5. Git Branching & Track Discipline
 - Never commit directly to `main`.
-- Work on assigned track feature branches (`feature/track-a-pipeline`, `feature/track-b-storage`, `feature/track-c-ui`, or the assigned participant branch).
-- Verify `py_compile` and unit test suites pass before opening PRs for merge sync points.
+- Work on assigned participant/feature branches (e.g. `ramzi` or `feature/track-c-ui`).
+- Fetch and pull before starting work:
+  ```bash
+  git checkout <branch>
+  git fetch --all
+  git pull
+  ```
+- Pause at designated synchronization points defined in `specs/00_OVERVIEW_AND_SCHEDULE.md` and instruct the user to commit, push, and open a PR into `main`.
