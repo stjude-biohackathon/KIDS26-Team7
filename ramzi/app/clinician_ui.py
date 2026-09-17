@@ -474,9 +474,28 @@ else:
     with col2:
         st.markdown("<div class='col-header'>2. Simplified English (Clinician Edit)</div>", unsafe_allow_html=True)
         
-        # Telemetry Badges
+        # Telemetry Metrics (FKGL Reading Level & Verbatim Safety Lock)
         metrics = packet.evaluation_metrics or EvaluationMetrics()
-        badge_html = "<div>"
+
+        m_col1, m_col2 = st.columns(2)
+        with m_col1:
+            st.metric(
+                label="📖 FKGL Readability",
+                value=f"{metrics.fkgl_score}",
+                delta="Target: 5.0–6.9" if 4.0 <= metrics.fkgl_score <= 6.9 else "Out of Range",
+                delta_color="normal" if 4.0 <= metrics.fkgl_score <= 6.9 else "inverse",
+                help="Flesch-Kincaid Grade Level calculated via textstat. Pediatric discharge goal is 5th–6th grade.",
+            )
+        with m_col2:
+            st.metric(
+                label="🔒 Verbatim Score",
+                value=f"{metrics.verbatim_match_percent:.1f}%",
+                delta=f"{len(metrics.verbatim_matches)} locked" if len(metrics.verbatim_mismatches) == 0 else f"{len(metrics.verbatim_mismatches)} missing",
+                delta_color="normal" if len(metrics.verbatim_mismatches) == 0 else "inverse",
+                help="Percentage of safety-critical values (dosages, fever thresholds, contact numbers) preserved verbatim.",
+            )
+
+        badge_html = "<div style='margin-top: 4px; margin-bottom: 6px;'>"
         
         # FKGL Badge
         if 4.0 <= metrics.fkgl_score <= 6.9:
@@ -486,9 +505,9 @@ else:
             
         # Verbatim Lock Badge
         if len(metrics.verbatim_mismatches) == 0:
-            badge_html += f"<span class='metric-badge-pass'>🟢 Verbatim: {metrics.verbatim_match_percent}%</span>"
+            badge_html += f"<span class='metric-badge-pass'>🟢 Verbatim: {metrics.verbatim_match_percent:.1f}%</span>"
         else:
-            badge_html += f"<span class='metric-badge-danger'>🔴 Missing: {len(metrics.verbatim_mismatches)} tokens</span>"
+            badge_html += f"<span class='metric-badge-danger'>🔴 Verbatim: {metrics.verbatim_match_percent:.1f}% ({len(metrics.verbatim_mismatches)} Missing)</span>"
             
         # Safety Judge Badge
         if metrics.safety_judge and metrics.safety_judge.overall_verdict == "PASS":
@@ -502,9 +521,12 @@ else:
         st.markdown(badge_html, unsafe_allow_html=True)
         
         if metrics.verbatim_mismatches:
-            st.caption(f"<small style='color: #DC2626;'>Mismatched safety tokens: {', '.join(metrics.verbatim_mismatches)}</small>", unsafe_allow_html=True)
+            st.caption(f"<small style='color: #DC2626;'>⚠️ Missing safety tokens: {', '.join(metrics.verbatim_mismatches)}</small>", unsafe_allow_html=True)
+        elif metrics.verbatim_matches:
+            st.caption(f"<small style='color: #03543F;'>🔒 Locked safety tokens: {', '.join(metrics.verbatim_matches)}</small>", unsafe_allow_html=True)
+
         if metrics.safety_judge and metrics.safety_judge.factual_drift_detected:
-            st.caption(f"<small style='color: #DC2626;'>Safety Alert: {metrics.safety_judge.explanation}</small>", unsafe_allow_html=True)
+            st.caption(f"<small style='color: #DC2626;'>🚨 Safety Alert: {metrics.safety_judge.explanation}</small>", unsafe_allow_html=True)
 
         # Interactive text area with two-way binding
         # Invariant: Read directly from session state; never mutate key downstream
