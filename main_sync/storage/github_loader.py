@@ -9,11 +9,13 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
 import time
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 import jwt
+from pydantic import ValidationError
 
 from schemas.instruction_packet import (
     ClinicalOrders,
@@ -22,6 +24,21 @@ from schemas.instruction_packet import (
 
 # In-memory token cache: (token_str, expiry_timestamp)
 _TOKEN_CACHE: Dict[str, Tuple[str, float]] = {}
+
+# Provenance of the most recent fetch_remote_templates_and_orders() call, so the
+# UI can report what actually happened instead of inferring it from credential
+# presence (specs/05 FIX-B3/FIX-C1). Never holds credential material.
+_LAST_LOAD_STATUS: Dict[str, Any] = {"source": "unknown", "error": None, "warnings": []}
+
+# The upstream `instructions[].type` vocabulary does not fully match the
+# authoritative `handout_template_structure[].section` names declared in the
+# same file. These three placements were supplied by the clinical owner; the
+# other three type values match a declared section name exactly.
+_TYPE_TO_DECLARED_SECTION: Dict[str, str] = {
+    "pain_management": "pain_or_symptom_management",
+    "warning_sign": "warning_signs_watch_for",
+    "hydration_nutrition": "supportive_home_care",
+}
 
 
 def load_mock_templates_and_orders() -> Tuple[Dict[str, Dict[str, str]], Dict[str, ClinicalOrders]]:
@@ -301,13 +318,247 @@ def fetch_file_content_in_memory(
     return decoded_bytes.decode("utf-8")
 
 
-def fetch_remote_templates_and_orders() -> Tuple[Dict[str, Dict[str, str]], Dict[str, ClinicalOrders]]:
+def get_last_load_status() -> Dict[str, Any]:
+    """Report what the most recent live load actually did (specs/05 FIX-B3).
+
+    Returns a copy containing `source` ("github_app" | "mock" | "unknown"),
+    an `error` string when the live path failed, and non-fatal `warnings`
+    (e.g. upstream JSON defects that were tolerated). Never contains
+    credential material.
+    """
+    return {
+        "source": _LAST_LOAD_STATUS.get("source", "unknown"),
+        "error": _LAST_LOAD_STATUS.get("error"),
+        "warnings": list(_LAST_LOAD_STATUS.get("warnings", [])),
+    }
+
+
+def _sanitize_error(exc: Exception) -> str:
+    """Describe a failure without echoing credentials, tokens, or key paths."""
+    if isinstance(exc, FileNotFoundError):
+        return "Configured GitHub App private key file was not found."
+    if isinstance(exc, json.JSONDecodeError):
+        return (
+            "Upstream JSON could not be parsed "
+            f"({exc.msg} at line {exc.lineno} column {exc.colno})."
+        )
+    if isinstance(exc, ValidationError):
+        return "Upstream order record did not match the canonical ClinicalOrders schema."
+    if isinstance(exc, requests.RequestException):
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+        suffix = f" (HTTP {status})" if status else ""
+        return f"GitHub API request failed: {type(exc).__name__}{suffix}."
+    if isinstance(exc, (KeyError, ValueError, TypeError)):
+        return f"Upstream data was unusable: {type(exc).__name__}."
+    return f"Unexpected error during live load: {type(exc).__name__}."
+
+
+def parse_json_tolerantly(raw_text: str, warnings: List[str], label: str) -> Any:
+    """Parse strict JSON, retrying once for a trailing-comma defect.
+
+    The upstream modules file currently carries a trailing comma, which strict
+    `json.loads` rejects. Rather than hiding that, the lenient retry records a
+    data-quality warning so the defect can be fixed at source. The repaired
+    text is never written to disk.
+    """
+    try:
+        return json.loads(raw_text)
+    except json.JSONDecodeError:
+        repaired = re.sub(r",(\s*[}\]])", r"\1", raw_text)
+        parsed = json.loads(repaired)
+        warnings.append(
+            f"{label}: upstream JSON contained trailing comma(s); parsed leniently "
+            "in memory. The source file should be corrected."
+        )
+        return parsed
+
+
+def adapt_modules(raw: Dict[str, Any]) -> Dict[str, Dict[str, str]]:
+    """Compose `{category: {version: template_text}}` from the upstream schema.
+
+    Orders and binds clinician-authored `instruction_text` values only: no
+    clinical prose is generated, paraphrased, or rewritten here. Section order
+    follows the file's authoritative `handout_template_structure` declaration.
+    """
+    instructions = raw.get("instructions") or []
+    if not instructions:
+        raise ValueError("Upstream modules payload contained no instructions.")
+
+    declared_sections = [
+        entry.get("section", "")
+        for entry in (raw.get("handout_template_structure") or [])
+        if entry.get("section")
+    ]
+    declared_lookup = set(declared_sections)
+
+    grouped: Dict[str, Dict[str, List[str]]] = {}
+    for item in instructions:
+        category = item.get("category")
+        text = item.get("instruction_text")
+        if not category or not text:
+            continue
+        item_type = item.get("type", "")
+        section = (
+            item_type if item_type in declared_lookup
+            else _TYPE_TO_DECLARED_SECTION.get(item_type, item_type)
+        )
+        grouped.setdefault(category, {}).setdefault(section, []).append(text)
+
+    if not grouped:
+        raise ValueError("Upstream modules payload contained no usable instructions.")
+
+    # Instruction content exists only for the file's current version; expose the
+    # same vetted text under each historical version label so the UI's version
+    # selector always resolves to real upstream wording.
+    versions: List[str] = []
+    for candidate in [raw.get("version")] + [
+        entry.get("version") for entry in (raw.get("version_history") or [])
+    ]:
+        if candidate and candidate not in versions:
+            versions.append(candidate)
+    if not versions:
+        raise ValueError("Upstream modules payload is missing version metadata.")
+
+    modules: Dict[str, Dict[str, str]] = {}
+    for category, sections in grouped.items():
+        ordered = [s for s in declared_sections if s in sections]
+        ordered += [s for s in sections if s not in declared_lookup]
+        blocks = []
+        for section in ordered:
+            heading = section.replace("_", " ").upper()
+            body = "\n".join(f"- {line}" for line in sections[section])
+            blocks.append(f"=== {heading} ===\n{body}")
+        modules[category] = {version: "\n\n".join(blocks) for version in versions}
+    return modules
+
+
+def adapt_orders(raw: Dict[str, Any]) -> Dict[str, ClinicalOrders]:
+    """Map upstream `synthetic_orders[]` records onto canonical `ClinicalOrders`.
+
+    One record per category is exposed, preferring the record whose `version`
+    matches the file's current `version`.
+    """
+    records = raw.get("synthetic_orders") or []
+    if not records:
+        raise ValueError("Upstream orders payload contained no synthetic_orders.")
+    current_version = raw.get("version") or ""
+
+    optional_field_map = (
+        ("age", "patient_age"),
+        ("urgent_fever_threshold", "temperature_threshold_urgent"),
+        ("emergency_fever_threshold", "temperature_threshold_emergency"),
+        ("daytime_phone", "clinic_phone_daytime"),
+        ("after_hours_phone", "clinic_phone_after_hours"),
+        ("emergency_phone", "emergency_contact"),
+    )
+
+    adapted: Dict[str, ClinicalOrders] = {}
+    chosen_version: Dict[str, str] = {}
+    for record in records:
+        category = record.get("category")
+        if not category:
+            continue
+        record_version = record.get("version", "")
+        already = category in adapted
+        if already and not (
+            record_version == current_version and chosen_version.get(category) != current_version
+        ):
+            continue
+
+        medications = [
+            MedicationOrder(
+                name=med.get("name", ""),
+                dose=med.get("dose", ""),
+                route=med.get("route") or "oral",
+                frequency=med.get("frequency", ""),
+                special_instructions=med.get("special_instructions", ""),
+            )
+            for med in (record.get("medications") or [])
+        ]
+        fields: Dict[str, Any] = {
+            "patient_id": record.get("patient_synthetic_id", ""),
+            "diagnosis": record.get("diagnosis", ""),
+            "medications": medications,
+            "order_id": record.get("order_id", ""),
+        }
+        if record_version:
+            fields["order_version"] = record_version
+        # Only supply present values so the schema's own defaults survive.
+        for target, source in optional_field_map:
+            value = record.get(source)
+            if value:
+                fields[target] = value
+
+        adapted[category] = ClinicalOrders(**fields)
+        chosen_version[category] = record_version
+
+    if not adapted:
+        raise ValueError("Upstream orders payload contained no usable records.")
+    return adapted
+
+
+def merge_order_safety_sections(
+    modules: Dict[str, Dict[str, str]], raw_orders: Dict[str, Any]
+) -> Dict[str, Dict[str, str]]:
+    """Append hydration and red-flag wording that has no canonical schema field.
+
+    `hydration_order` and `red_flag_symptoms[]` are safety-critical vetted text
+    that `ClinicalOrders` cannot carry, so they are bound into the composed
+    template text instead of being dropped. Text is copied verbatim.
+    """
+    current_version = raw_orders.get("version") or ""
+    by_category: Dict[str, Dict[str, Any]] = {}
+    chosen_version: Dict[str, str] = {}
+    for record in raw_orders.get("synthetic_orders") or []:
+        category = record.get("category")
+        if not category:
+            continue
+        record_version = record.get("version", "")
+        if category in by_category and not (
+            record_version == current_version and chosen_version.get(category) != current_version
+        ):
+            continue
+        by_category[category] = record
+        chosen_version[category] = record_version
+
+    merged: Dict[str, Dict[str, str]] = {}
+    for category, versioned in modules.items():
+        record = by_category.get(category)
+        extra_blocks: List[str] = []
+        if record:
+            hydration = record.get("hydration_order")
+            if hydration:
+                extra_blocks.append(f"=== HYDRATION PLAN ===\n- {hydration}")
+            red_flags = record.get("red_flag_symptoms") or []
+            if red_flags:
+                body = "\n".join(f"- {flag}" for flag in red_flags)
+                extra_blocks.append(f"=== RED FLAG SYMPTOMS ===\n{body}")
+        suffix = ("\n\n" + "\n\n".join(extra_blocks)) if extra_blocks else ""
+        merged[category] = {
+            version: text + suffix for version, text in versioned.items()
+        }
+    return merged
+
+
+def fetch_remote_templates_and_orders(
+    strict: bool = False,
+) -> Tuple[Dict[str, Dict[str, str]], Dict[str, ClinicalOrders]]:
     """
     Fetches templates and orders on the fly.
     If GitHub App credentials are configured, streams remotely into memory.
-    Otherwise, gracefully falls back to mock in-memory data fixtures.
+    Otherwise, falls back to mock in-memory data fixtures.
+
+    The outcome is always recorded in `get_last_load_status()` so callers can
+    report the real provenance rather than assuming live data was used. With
+    `strict=True` a live failure is raised instead of silently degrading.
     """
+    warnings: List[str] = []
     if not is_github_app_configured():
+        _LAST_LOAD_STATUS.update({
+            "source": "mock",
+            "error": "GitHub App credentials are not configured.",
+            "warnings": warnings,
+        })
         return load_mock_templates_and_orders()
 
     cfg = get_dataloader_config()
@@ -321,14 +572,23 @@ def fetch_remote_templates_and_orders() -> Tuple[Dict[str, Dict[str, str]], Dict
         modules_json = fetch_file_content_in_memory(repo, cfg["MODULES_PATH"], token)
         orders_json = fetch_file_content_in_memory(repo, cfg["ORDERS_PATH"], token)
 
-        modules_raw = json.loads(modules_json)
-        orders_raw = json.loads(orders_json)
+        modules_raw = parse_json_tolerantly(modules_json, warnings, "modules")
+        orders_raw = parse_json_tolerantly(orders_json, warnings, "orders")
 
-        parsed_orders: Dict[str, ClinicalOrders] = {}
-        for k, v in orders_raw.items():
-            parsed_orders[k] = ClinicalOrders.model_validate(v)
+        modules = merge_order_safety_sections(adapt_modules(modules_raw), orders_raw)
+        orders = adapt_orders(orders_raw)
 
-        return modules_raw, parsed_orders
-    except Exception:
-        # Graceful fallback to in-memory fixtures if remote network fails
+        _LAST_LOAD_STATUS.update({
+            "source": "github_app", "error": None, "warnings": warnings,
+        })
+        return modules, orders
+    except Exception as exc:
+        # Broad catch keeps the clinician workflow usable, but the reason is
+        # always recorded (and re-raised under strict=True) so the failure is
+        # surfaced rather than masked.
+        _LAST_LOAD_STATUS.update({
+            "source": "mock", "error": _sanitize_error(exc), "warnings": warnings,
+        })
+        if strict:
+            raise
         return load_mock_templates_and_orders()

@@ -72,16 +72,24 @@ except ImportError:
 
 # Optional live module hooks for Phase 2/3 sync points
 try:
-    from storage.github_loader import fetch_remote_templates_and_orders, is_github_app_configured
+    from storage.github_loader import (
+        fetch_remote_templates_and_orders,
+        get_last_load_status,
+        is_github_app_configured,
+    )
     HAS_LIVE_LOADER = True
 except ImportError:
     HAS_LIVE_LOADER = False
 
 try:
     from pipeline.orchestrator import PipelineOrchestrator
+    from pipeline.llms import describe_model_error
     HAS_LIVE_PIPELINE = True
 except ImportError:
     HAS_LIVE_PIPELINE = False
+
+    def describe_model_error(alias, exc):  # type: ignore[misc]
+        return f"{alias}: live pipeline module unavailable ({type(exc).__name__})."
 
 try:
     from storage.gold_library import save_gold_record as live_save_gold, load_gold_records as live_load_gold
@@ -113,13 +121,18 @@ def _is_live_data_configured() -> bool:
 def _load_templates_and_orders():
     """Fetch clinical templates/orders once per cache lifetime; zero disk writes.
 
-    Falls back to the bundled mock fixtures if the live loader is unavailable
-    or the GitHub App is not configured/reachable (`github_loader` itself
-    already performs this fallback for network failures).
+    Returns `(modules, orders, status)` where `status` reports what actually
+    happened (specs/05 FIX-B3), so the UI can show real provenance instead of
+    inferring "live" from credential presence alone.
     """
     if HAS_LIVE_LOADER:
-        return fetch_remote_templates_and_orders()
-    return MOCK_MODULES, MOCK_ORDERS
+        modules, orders = fetch_remote_templates_and_orders()
+        return modules, orders, get_last_load_status()
+    return MOCK_MODULES, MOCK_ORDERS, {
+        "source": "mock",
+        "error": "Live loader module is unavailable in this environment.",
+        "warnings": [],
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -209,6 +222,10 @@ if "txt_clinician_en" not in st.session_state:
     st.session_state["txt_clinician_en"] = ""
 if "live_pipeline_notice" not in st.session_state:
     st.session_state["live_pipeline_notice"] = False
+if "live_data_notice" not in st.session_state:
+    st.session_state["live_data_notice"] = False
+if "live_pipeline_reason" not in st.session_state:
+    st.session_state["live_pipeline_reason"] = ""
 
 
 # ---------------------------------------------------------------------------
@@ -282,7 +299,7 @@ with st.sidebar:
     selected_llm1 = st.selectbox(
         "LLM 1 (Simplifier & Spanish):",
         options=model_options,
-        index=model_options.index("gpt52"),
+        index=model_options.index("gpt4o"),
         help="Model responsible for 5th–6th grade plain-language simplification and Spanish translation.",
     )
     selected_llm2 = st.selectbox(
@@ -296,12 +313,23 @@ with st.sidebar:
     st.subheader("2. In-Memory Data Stream")
 
     live_data_active = _is_live_data_configured()
+    live_templates, live_orders, load_status = _load_templates_and_orders()
+    data_source_is_live = load_status.get("source") == "github_app"
+
     col_badge, col_ref = st.columns([4, 1])
     with col_badge:
-        if live_data_active:
+        if data_source_is_live:
             st.markdown(
                 "**Source:** ☁️ GitHub App (In-Memory, No Local Copy)<br/>"
                 "<small style='color: #059669;'>Zero local copies • In-memory stream</small>",
+                unsafe_allow_html=True,
+            )
+        elif live_data_active:
+            # Credentials exist but the live load did not succeed: say so
+            # rather than showing a green badge over bundled fixtures.
+            st.markdown(
+                "**Source:** ⚠️ Bundled Synthetic Fixtures<br/>"
+                "<small style='color: #B91C1C;'>GitHub App configured but live load failed</small>",
                 unsafe_allow_html=True,
             )
         else:
@@ -315,7 +343,10 @@ with st.sidebar:
             st.cache_data.clear()
             st.rerun()
 
-    live_templates, live_orders = _load_templates_and_orders()
+    if not data_source_is_live and load_status.get("error"):
+        st.caption(f"⚠️ Data load reason: {load_status['error']}")
+    for warning in load_status.get("warnings", []):
+        st.caption(f"ℹ️ Upstream data quality: {warning}")
 
     st.divider()
     st.subheader("3. Protocol & Module Version")
@@ -423,6 +454,10 @@ with st.sidebar:
             raw_template = live_templates.get(condition, {}).get(module_version, "")
             packet = None
             live_failed = False
+            live_reason = ""
+            # A missing template while live data is expected is a data problem,
+            # not a model problem: report it instead of silently using mocks.
+            data_unavailable = data_source_is_live and not raw_template.strip()
             # The drift simulator injects errors into the mock templates directly;
             # it is not meaningful to ask a live model to simplify a corrupted
             # template, so drift tests always use the offline mock pipeline.
@@ -432,8 +467,9 @@ with st.sidebar:
                     packet = orchestrator.generate_live(
                         raw_template, active_orders, module_version=module_version, condition=condition,
                     )
-                except Exception:
+                except Exception as exc:
                     live_failed = True
+                    live_reason = describe_model_error(selected_llm1, exc)
                     packet = None
 
             if packet is None:
@@ -446,6 +482,8 @@ with st.sidebar:
                     drift_mode=drift_mode,
                 )
             st.session_state["live_pipeline_notice"] = live_failed
+            st.session_state["live_pipeline_reason"] = live_reason
+            st.session_state["live_data_notice"] = data_unavailable
             st.session_state["current_packet"] = packet
             st.session_state["clean_backup_packet"] = copy.deepcopy(packet)
             st.session_state["edits_checked_banner"] = False
@@ -466,9 +504,15 @@ if packet is None:
     st.info("👈 Select parameters in the sidebar and click **'🚀 Generate Instructions'** to begin.")
 else:
     if st.session_state.get("live_pipeline_notice"):
+        reason = st.session_state.get("live_pipeline_reason") or "reason unavailable"
         st.warning(
-            "⚠️ Live model call unavailable (unconfigured model or endpoint error); "
-            "showing offline mock output instead."
+            "⚠️ Live model call unavailable; showing offline mock output instead. "
+            f"Reason — {reason}"
+        )
+    if st.session_state.get("live_data_notice"):
+        st.warning(
+            "⚠️ Live clinical data unavailable for this module/version "
+            "(no upstream template matched); showing offline mock output instead."
         )
     # Patient Banner & Status Line
     col_info, col_stat = st.columns([3, 1])
@@ -622,12 +666,20 @@ else:
             edited_text = st.session_state.get("txt_clinician_en", packet.simplified_en)
 
             revised_packet = None
+            recheck_live_failed = False
+            recheck_reason = ""
             if HAS_LIVE_PIPELINE:
                 try:
                     orchestrator = PipelineOrchestrator(llm1_model=selected_llm1, llm2_model=selected_llm2)
                     revised_packet = orchestrator.recheck_edits_live(packet, edited_text)
-                except Exception:
+                except Exception as exc:
                     revised_packet = None
+                    recheck_live_failed = True
+                    recheck_reason = describe_model_error(selected_llm1, exc)
+            # Surface a live re-check outage instead of silently substituting
+            # the offline mock re-translation (specs/05 FIX-C2).
+            st.session_state["live_pipeline_notice"] = recheck_live_failed
+            st.session_state["live_pipeline_reason"] = recheck_reason
 
             if revised_packet is not None:
                 packet = revised_packet

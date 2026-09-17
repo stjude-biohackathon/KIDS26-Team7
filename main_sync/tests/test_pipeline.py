@@ -9,7 +9,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from pipeline.orchestrator import PipelineOrchestrator
-from pipeline.evaluator import evaluate_text
+from pipeline.evaluator import check_verbatim, evaluate_text, extract_verbatim_tokens
 from schemas.instruction_packet import ClinicalOrders, MedicationOrder
 
 
@@ -228,6 +228,48 @@ class LivePipelineTests(unittest.TestCase):
         self.assertEqual(packet.evaluation_metrics.safety_judge.overall_verdict, "PASS")
         self.assertEqual(packet.status, "PENDING")
 
+    def test_judge_pass_cannot_override_a_deterministic_verbatim_mismatch(self):
+        """Numeric/unit parity is a hard sign-off block; a model may not waive it."""
+        judge_json = (
+            '{"overall_verdict": "PASS", "factual_drift_detected": false, '
+            '"omitted_red_flags": [], "contradictory_advice": [], '
+            '"clinical_risk_score": 0.0, "explanation": "looks fine to me"}'
+        )
+        orders = synthetic_orders(medications=[MedicationOrder(name="Demo", dose="5 mg")])
+        with self._patched_clients(
+            llm1_responses=["Give the medicine by mouth daily.", "Dé el medicamento cada dia."],
+            llm2_responses=["Give the medicine by mouth every day.", judge_json],
+        ):
+            pipeline = PipelineOrchestrator(llm1_model="gpt52", llm2_model="gpt4o")
+            packet = pipeline.generate_live(
+                "Administer 5 mg orally daily.", orders, module_version="v1.0.0", condition="demo"
+            )
+        metrics = packet.evaluation_metrics
+        self.assertIn("5 mg", metrics.verbatim_mismatches)
+        self.assertEqual(metrics.safety_judge.overall_verdict, "FLAGGED_FOR_REVIEW")
+        self.assertIn("verbatim", metrics.safety_judge.explanation.lower())
+
+    def test_bilingual_verbatim_mismatch_is_flagged_in_the_live_path(self):
+        """The Spanish and back-translated panes must also carry protected values."""
+        judge_json = (
+            '{"overall_verdict": "PASS", "factual_drift_detected": false, '
+            '"omitted_red_flags": [], "contradictory_advice": [], '
+            '"clinical_risk_score": 0.0, "explanation": "ok"}'
+        )
+        orders = synthetic_orders(medications=[MedicationOrder(name="Demo", dose="5 mg")])
+        with self._patched_clients(
+            llm1_responses=["Give 5 mg by mouth daily.", "Dé el medicamento por via oral."],
+            llm2_responses=["Give the medicine by mouth every day.", judge_json],
+        ):
+            pipeline = PipelineOrchestrator(llm1_model="gpt52", llm2_model="gpt4o")
+            packet = pipeline.generate_live(
+                "Administer 5 mg orally daily.", orders, module_version="v1.0.0", condition="demo"
+            )
+        metrics = packet.evaluation_metrics
+        self.assertEqual(metrics.verbatim_mismatches, [])
+        self.assertEqual(metrics.safety_judge.overall_verdict, "FLAGGED_FOR_REVIEW")
+        self.assertIn("Spanish", metrics.safety_judge.explanation)
+
     def test_generate_live_safety_judge_failure_is_flagged_not_raised(self):
         orders = synthetic_orders(medications=[MedicationOrder(name="Demo", dose="5 mg")])
         with self._patched_clients(
@@ -357,3 +399,145 @@ class EvaluationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CompositeSafetyFieldExtractionTests(unittest.TestCase):
+    """specs/05: upstream order fields carry descriptive text around the
+    safety-critical value. Lock the extracted values, not the prose."""
+
+    def _orders(self, **overrides):
+        fields = dict(
+            order_id="ORD-SC-01",
+            order_version="v1.2.0",
+            patient_id="SYN-PED-101",
+            age="9 years",
+            diagnosis="Sickle cell pain episode",
+            medications=[],
+            urgent_fever_threshold="100.4°F (38.0°C)",
+            emergency_fever_threshold="101.0°F (38.3°C)",
+            daytime_phone="555-0144 (Pediatric Hematology Day Clinic, M-F 8am-5pm)",
+            after_hours_phone="555-0199 (24-hour on-call line)",
+            emergency_phone="Call 911 or go to Children's Hospital Emergency Department",
+        )
+        fields.update(overrides)
+        return ClinicalOrders(**fields)
+
+    def test_descriptive_text_around_a_threshold_is_not_locked(self):
+        tokens = extract_verbatim_tokens(self._orders())
+        self.assertNotIn("100.4°F (38.0°C)", tokens)
+        self.assertIn("100.4°F", tokens)
+
+    def test_both_units_of_a_dual_unit_threshold_are_locked(self):
+        tokens = extract_verbatim_tokens(self._orders())
+        self.assertIn("100.4°F", tokens)
+        self.assertIn("38.0°C", tokens)
+        self.assertIn("101.0°F", tokens)
+        self.assertIn("38.3°C", tokens)
+
+    def test_clinic_name_and_hours_are_not_locked_but_the_number_is(self):
+        tokens = extract_verbatim_tokens(self._orders())
+        self.assertIn("555-0144", tokens)
+        self.assertNotIn(
+            "555-0144 (Pediatric Hematology Day Clinic, M-F 8am-5pm)", tokens
+        )
+        self.assertFalse(
+            any("Hematology" in t for t in tokens),
+            f"Descriptive prose leaked into verbatim locks: {tokens}",
+        )
+
+    def test_emergency_number_is_locked_without_the_surrounding_sentence(self):
+        tokens = extract_verbatim_tokens(self._orders())
+        self.assertIn("911", tokens)
+        self.assertFalse(
+            any("Children's Hospital" in t for t in tokens),
+            f"Descriptive prose leaked into verbatim locks: {tokens}",
+        )
+
+    def test_medication_dose_is_extracted_from_a_composite_dose_string(self):
+        orders = self._orders(
+            medications=[
+                MedicationOrder(
+                    name="Ibuprofen",
+                    dose="200 mg (10 mg/kg, max 600 mg)",
+                    route="by mouth",
+                    frequency="every 6 hours",
+                )
+            ]
+        )
+        tokens = extract_verbatim_tokens(orders)
+        self.assertIn("200 mg", tokens)
+        self.assertNotIn("200 mg (10 mg/kg, max 600 mg)", tokens)
+
+    def test_plain_values_without_descriptive_text_are_unchanged(self):
+        orders = self._orders(
+            urgent_fever_threshold="100.4°F",
+            daytime_phone="901-595-3300",
+            emergency_phone="911",
+            after_hours_phone="",
+        )
+        tokens = extract_verbatim_tokens(orders)
+        self.assertIn("100.4°F", tokens)
+        self.assertIn("901-595-3300", tokens)
+        self.assertIn("911", tokens)
+
+    def test_field_with_no_extractable_safety_value_is_not_locked_as_prose(self):
+        orders = self._orders(
+            emergency_phone="Go to the nearest emergency department",
+        )
+        tokens = extract_verbatim_tokens(orders)
+        self.assertFalse(
+            any("emergency department" in t.lower() for t in tokens),
+            f"Unanchored prose must not be verbatim-locked: {tokens}",
+        )
+
+    def test_repeated_values_across_fields_are_reported_once(self):
+        orders = self._orders(
+            daytime_phone="555-0144 (day clinic)",
+            after_hours_phone="555-0144 (after hours)",
+        )
+        tokens = extract_verbatim_tokens(orders)
+        self.assertEqual(tokens.count("555-0144"), 1)
+
+    def test_product_concentration_is_locked_as_one_value_not_fragments(self):
+        """Upstream doses read "280 mg (14 mL of 100 mg/5 mL suspension)".
+
+        Splitting the concentration into "100 mg" and "5 mL" creates tokens that
+        can never match: check_verbatim deliberately refuses a dose followed by
+        "/", so "100 mg" inside "100 mg/5 mL" would be a permanent mismatch.
+        """
+        orders = self._orders(
+            medications=[
+                MedicationOrder(
+                    name="Ibuprofen",
+                    dose="280 mg (14 mL of 100 mg/5 mL suspension)",
+                    route="by mouth",
+                    frequency="every 6 hours",
+                )
+            ]
+        )
+        tokens = extract_verbatim_tokens(orders)
+        self.assertIn("280 mg", tokens)
+        self.assertIn("14 mL", tokens)
+        self.assertIn("100 mg/5 mL", tokens)
+        self.assertNotIn("100 mg", tokens)
+        self.assertNotIn("5 mL", tokens)
+
+        text = (
+            "Give 280 mg (14 mL) of ibuprofen by mouth every 6 hours. "
+            "Use the 100 mg/5 mL suspension."
+        )
+        matches, _ = check_verbatim(text, orders)
+        for dose_token in ("280 mg", "14 mL", "100 mg/5 mL"):
+            self.assertIn(dose_token, matches)
+
+    def test_live_style_text_passes_when_it_carries_the_extracted_values(self):
+        orders = self._orders()
+        text = (
+            "Call the clinic at 555-0144 during the day or 555-0199 at night. "
+            "Call if the fever reaches 100.4°F (38.0°C). "
+            "Go to the emergency room if the fever reaches 101.0°F (38.3°C). "
+            "For an emergency, call 911."
+        )
+        matches, mismatches = check_verbatim(text, orders)
+        self.assertEqual(mismatches, [])
+        self.assertIn("100.4°F", matches)

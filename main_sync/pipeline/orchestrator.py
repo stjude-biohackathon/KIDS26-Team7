@@ -46,6 +46,33 @@ def _evaluate_outputs(
     return metrics
 
 
+def _enforce_deterministic_safety_gate(
+    metrics: EvaluationMetrics, spanish: str, back: str, orders: ClinicalOrders
+) -> EvaluationMetrics:
+    """Let regex parity checks veto the live judge, never the other way round.
+
+    The Safety Judge is a model and may return PASS on output that dropped a
+    dose, threshold, or phone number. Numeric/unit parity is a hard sign-off
+    block, so a deterministic mismatch in any pane forces FLAGGED_FOR_REVIEW.
+    """
+    blocking = []
+    if metrics.verbatim_mismatches:
+        blocking.append("English verbatim mismatch")
+    for label, text in (("Spanish", spanish), ("Back-translation", back)):
+        if not text:
+            blocking.append(f"{label} pane unavailable")
+        elif check_verbatim(text, orders)[1]:
+            blocking.append(f"{label} verbatim mismatch")
+    if blocking:
+        metrics.safety_judge.overall_verdict = "FLAGGED_FOR_REVIEW"
+        metrics.safety_judge.explanation += (
+            " Deterministic safety gate overrides the judge verdict: "
+            + "; ".join(blocking)
+            + "."
+        )
+    return metrics
+
+
 class PipelineOrchestrator:
     """Bind supplied wording and run local checks; no model requests in Phase 1."""
 
@@ -188,6 +215,7 @@ class PipelineOrchestrator:
         metrics.safety_judge = live_llm.judge_safety(
             llm2_client, llm2_deployment, composite_template_text, english, saved_orders
         )
+        metrics = _enforce_deterministic_safety_gate(metrics, spanish, back, saved_orders)
 
         return InstructionPacket(
             packet_id=str(uuid4()),
@@ -230,6 +258,9 @@ class PipelineOrchestrator:
         metrics = evaluate_text(edited_en, revision.clinical_orders)
         metrics.safety_judge = live_llm.judge_safety(
             llm2_client, llm2_deployment, revision.original_clinical_text, edited_en, revision.clinical_orders
+        )
+        metrics = _enforce_deterministic_safety_gate(
+            metrics, revision.translated_es, revision.back_translated_en, revision.clinical_orders
         )
         revision.evaluation_metrics = metrics
 

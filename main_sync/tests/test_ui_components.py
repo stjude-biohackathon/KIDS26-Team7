@@ -7,6 +7,9 @@ and PDF rendering for the Clinician Review Dashboard.
 from __future__ import annotations
 
 import unittest
+from contextlib import ExitStack, contextmanager
+from unittest.mock import patch
+
 from app.mock_components import (
     ClinicalOrders,
     EvaluationMetrics,
@@ -21,6 +24,52 @@ from app.mock_components import (
     run_mock_pipeline,
     save_to_gold_library,
 )
+
+
+@contextmanager
+def offline_app(load_status=None, modules=None):
+    """Run the Streamlit app without touching the network.
+
+    Unit tests must stay hermetic: once live credentials resolve, the app would
+    otherwise call the real GitHub App and the real models, making these
+    structural assertions slow, flaky, and dependent on someone's secrets.
+    """
+    import streamlit as st
+
+    from storage import github_loader
+
+    mock_modules, mock_orders = github_loader.load_mock_templates_and_orders()
+    status = load_status or {"source": "mock", "error": None, "warnings": []}
+
+    def _unavailable(*_args, **_kwargs):
+        raise RuntimeError("Live model call disabled in unit tests.")
+
+    st.cache_data.clear()
+    with ExitStack() as stack:
+        stack.enter_context(
+            patch.object(
+                github_loader,
+                "fetch_remote_templates_and_orders",
+                return_value=(mock_modules if modules is None else modules, mock_orders),
+            )
+        )
+        stack.enter_context(
+            patch.object(github_loader, "get_last_load_status", return_value=status)
+        )
+        stack.enter_context(
+            patch(
+                "pipeline.orchestrator.PipelineOrchestrator.generate_live",
+                _unavailable,
+            )
+        )
+        stack.enter_context(
+            patch(
+                "pipeline.orchestrator.PipelineOrchestrator.recheck_edits_live",
+                _unavailable,
+            )
+        )
+        yield
+    st.cache_data.clear()
 
 
 class TestTrackCComponents(unittest.TestCase):
@@ -170,76 +219,217 @@ class TestTrackCComponents(unittest.TestCase):
         """Simulate Streamlit clinician review app execution and packet generation."""
         from streamlit.testing.v1 import AppTest
 
-        at = AppTest.from_file("../app/clinician_ui.py")
-        at.run()
-        self.assertEqual(len(at.exception), 0, f"AppTest raised exceptions on launch: {at.exception}")
+        with offline_app():
+            at = AppTest.from_file("../app/clinician_ui.py")
+            at.run()
+            self.assertEqual(len(at.exception), 0, f"AppTest raised exceptions on launch: {at.exception}")
 
-        # Click Generate Instructions
-        gen_btn = None
-        for b in at.button:
-            if "Generate" in b.label:
-                gen_btn = b
-                break
-        self.assertIsNotNone(gen_btn, "Generate Instructions button not found in sidebar")
-        gen_btn.click().run()
-        self.assertEqual(len(at.exception), 0, f"AppTest raised exceptions on generate: {at.exception}")
+            # Click Generate Instructions
+            gen_btn = None
+            for b in at.button:
+                if "Generate" in b.label:
+                    gen_btn = b
+                    break
+            self.assertIsNotNone(gen_btn, "Generate Instructions button not found in sidebar")
+            gen_btn.click().run()
+            self.assertEqual(len(at.exception), 0, f"AppTest raised exceptions on generate: {at.exception}")
 
-        # Verify 4-way comparative pane rendered
-        markdown_texts = [m.value for m in at.markdown]
-        self.assertTrue(any("1. Original Clinical Orders" in t for t in markdown_texts))
-        self.assertTrue(any("2. Simplified English" in t for t in markdown_texts))
-        self.assertTrue(any("3. Spanish Handout" in t for t in markdown_texts))
-        self.assertTrue(any("4. Back-Translated English" in t for t in markdown_texts))
+            # Verify 4-way comparative pane rendered
+            markdown_texts = [m.value for m in at.markdown]
+            self.assertTrue(any("1. Original Clinical Orders" in t for t in markdown_texts))
+            self.assertTrue(any("2. Simplified English" in t for t in markdown_texts))
+            self.assertTrue(any("3. Spanish Handout" in t for t in markdown_texts))
+            self.assertTrue(any("4. Back-Translated English" in t for t in markdown_texts))
 
-        # Verify action buttons exist
-        button_labels = [b.label for b in at.button]
-        self.assertTrue(any("Save & Check Edits" in l for l in button_labels))
-        self.assertTrue(any("Approve & Publish" in l for l in button_labels))
-        self.assertTrue(any("Reject & Log Drift" in l for l in button_labels))
+            # Verify action buttons exist
+            button_labels = [b.label for b in at.button]
+            self.assertTrue(any("Save & Check Edits" in l for l in button_labels))
+            self.assertTrue(any("Approve & Publish" in l for l in button_labels))
+            self.assertTrue(any("Reject & Log Drift" in l for l in button_labels))
 
-        # Verify telemetry metrics for both FKGL and Verbatim score
-        metric_labels = [m.label for m in at.metric]
-        self.assertTrue(any("FKGL Readability" in l for l in metric_labels), f"FKGL metric not found in: {metric_labels}")
-        self.assertTrue(any("Verbatim Score" in l for l in metric_labels), f"Verbatim metric not found in: {metric_labels}")
+            # Verify telemetry metrics for both FKGL and Verbatim score
+            metric_labels = [m.label for m in at.metric]
+            self.assertTrue(any("FKGL Readability" in l for l in metric_labels), f"FKGL metric not found in: {metric_labels}")
+            self.assertTrue(any("Verbatim Score" in l for l in metric_labels), f"Verbatim metric not found in: {metric_labels}")
 
     def test_streamlit_app_inline_edit_and_approve(self):
         """Simulate Streamlit inline editing, re-checking, and approval gate."""
         from streamlit.testing.v1 import AppTest
 
+        with offline_app():
+            at = AppTest.from_file("../app/clinician_ui.py")
+            at.run()
+            for b in at.button:
+                if "Generate" in b.label:
+                    b.click().run()
+                    break
+
+            # Edit text in inline clinical editor
+            txt_area = None
+            for t in at.text_area:
+                if t.key == "txt_clinician_en":
+                    txt_area = t
+                    break
+            self.assertIsNotNone(txt_area, "Inline editor text area not found")
+            txt_area.input("Updated clinician verified instructions: 200 mg and 100.4°F.").run()
+
+            # Save & check edits
+            for b in at.button:
+                if "Save & Check Edits" in b.label:
+                    b.click().run()
+                    break
+            self.assertEqual(len(at.exception), 0)
+
+            # Verify telemetry metrics updated and present post-edit
+            metric_labels_after_edit = [m.label for m in at.metric]
+            self.assertTrue(any("Verbatim Score" in l for l in metric_labels_after_edit))
+            self.assertTrue(any("FKGL Readability" in l for l in metric_labels_after_edit))
+
+            # Approve & publish
+            for b in at.button:
+                if "Approve & Publish" in b.label:
+                    b.click().run()
+                    break
+            self.assertEqual(len(at.exception), 0)
+
+
+class TestLiveProvenanceReporting(unittest.TestCase):
+    """specs/05 FIX-C1/FIX-C2: the UI must report real provenance, never assume it."""
+
+    def setUp(self):
+        # `_load_templates_and_orders` is @st.cache_data-wrapped, so results
+        # (including load status) persist across AppTest runs in-process.
+        import streamlit as st
+
+        st.cache_data.clear()
+
+    def _run_app(self):
+        from streamlit.testing.v1 import AppTest
+
         at = AppTest.from_file("../app/clinician_ui.py")
         at.run()
-        for b in at.button:
-            if "Generate" in b.label:
-                b.click().run()
-                break
+        return at
 
-        # Edit text in inline clinical editor
-        txt_area = None
-        for t in at.text_area:
-            if t.key == "txt_clinician_en":
-                txt_area = t
-                break
-        self.assertIsNotNone(txt_area, "Inline editor text area not found")
-        txt_area.input("Updated clinician verified instructions: 200 mg and 100.4°F.").run()
+    def _badge_markdown(self, at):
+        return [
+            m.value for m in at.markdown
+            if "**Source:**" in m.value
+        ]
 
-        # Save & check edits
-        for b in at.button:
-            if "Save & Check Edits" in b.label:
-                b.click().run()
-                break
-        self.assertEqual(len(at.exception), 0)
+    def test_badge_reports_live_source_when_load_succeeds(self):
+        from unittest.mock import patch
 
-        # Verify telemetry metrics updated and present post-edit
-        metric_labels_after_edit = [m.label for m in at.metric]
-        self.assertTrue(any("Verbatim Score" in l for l in metric_labels_after_edit))
-        self.assertTrue(any("FKGL Readability" in l for l in metric_labels_after_edit))
+        from storage import github_loader
 
-        # Approve & publish
-        for b in at.button:
-            if "Approve & Publish" in b.label:
-                b.click().run()
-                break
-        self.assertEqual(len(at.exception), 0)
+        modules, orders = github_loader.load_mock_templates_and_orders()
+        live_status = {"source": "github_app", "error": None, "warnings": []}
+        with patch(
+            "storage.github_loader.fetch_remote_templates_and_orders",
+            return_value=(modules, orders),
+        ):
+            with patch(
+                "storage.github_loader.get_last_load_status", return_value=live_status
+            ):
+                at = self._run_app()
+        self.assertEqual(len(at.exception), 0, f"AppTest raised: {at.exception}")
+        badges = self._badge_markdown(at)
+        self.assertTrue(badges, "Data-source badge not rendered")
+        self.assertIn("GitHub App (In-Memory, No Local Copy)", badges[0])
+
+    def test_badge_reports_failed_live_load_instead_of_green_live_badge(self):
+        from unittest.mock import patch
+
+        from storage import github_loader
+
+        modules, orders = github_loader.load_mock_templates_and_orders()
+        failed_status = {
+            "source": "mock",
+            "error": "GitHub API request failed: ConnectionError.",
+            "warnings": [],
+        }
+        with patch(
+            "storage.github_loader.fetch_remote_templates_and_orders",
+            return_value=(modules, orders),
+        ):
+            with patch(
+                "storage.github_loader.get_last_load_status", return_value=failed_status
+            ):
+                with patch(
+                    "storage.github_loader.is_github_app_configured", return_value=True
+                ):
+                    at = self._run_app()
+        self.assertEqual(len(at.exception), 0, f"AppTest raised: {at.exception}")
+        badges = self._badge_markdown(at)
+        self.assertTrue(badges, "Data-source badge not rendered")
+        # Credentials are present but the load failed: must NOT claim live.
+        self.assertNotIn("GitHub App (In-Memory, No Local Copy)", badges[0])
+        self.assertIn("live load failed", badges[0])
+        captions = [c.value for c in at.caption]
+        self.assertTrue(
+            any("ConnectionError" in c for c in captions),
+            f"Failure reason not surfaced in captions: {captions}",
+        )
+
+    def test_upstream_data_quality_warnings_are_surfaced(self):
+        from unittest.mock import patch
+
+        from storage import github_loader
+
+        modules, orders = github_loader.load_mock_templates_and_orders()
+        warned_status = {
+            "source": "github_app",
+            "error": None,
+            "warnings": ["modules: upstream JSON contained trailing comma(s)"],
+        }
+        with patch(
+            "storage.github_loader.fetch_remote_templates_and_orders",
+            return_value=(modules, orders),
+        ):
+            with patch(
+                "storage.github_loader.get_last_load_status", return_value=warned_status
+            ):
+                at = self._run_app()
+        captions = [c.value for c in at.caption]
+        self.assertTrue(
+            any("trailing comma" in c for c in captions),
+            f"Upstream warning not surfaced: {captions}",
+        )
+
+    def test_empty_live_template_raises_data_notice(self):
+        from unittest.mock import patch
+
+        from storage import github_loader
+
+        _, orders = github_loader.load_mock_templates_and_orders()
+        # Live load "succeeded" but yields no template for the selected module.
+        empty_modules = {"sickle_cell_pain": {}}
+        live_status = {"source": "github_app", "error": None, "warnings": []}
+        with patch(
+            "storage.github_loader.fetch_remote_templates_and_orders",
+            return_value=(empty_modules, orders),
+        ):
+            with patch(
+                "storage.github_loader.get_last_load_status", return_value=live_status
+            ):
+                with patch(
+                    "pipeline.orchestrator.PipelineOrchestrator.generate_live",
+                    side_effect=RuntimeError("Live model call disabled in unit tests."),
+                ):
+                    at = self._run_app()
+                    for b in at.button:
+                        if "Generate" in b.label:
+                            b.click().run()
+                            break
+        self.assertEqual(len(at.exception), 0, f"AppTest raised: {at.exception}")
+        self.assertTrue(
+            at.session_state["live_data_notice"],
+            "Empty live template must set the data-outage notice, not silently use mocks.",
+        )
+        warnings = [w.value for w in at.warning]
+        self.assertTrue(
+            any("Live clinical data unavailable" in w for w in warnings),
+            f"Data-outage banner not shown: {warnings}",
+        )
 
 
 if __name__ == "__main__":

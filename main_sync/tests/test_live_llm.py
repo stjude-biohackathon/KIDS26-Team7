@@ -35,8 +35,9 @@ class CredentialResolutionTests(unittest.TestCase):
     def test_remote_alias_without_credentials_raises_without_echoing_env(self):
         with patch.dict(os.environ, {}, clear=True):
             with patch("pipeline.llms._SECRETS_PATH", Path("/nonexistent/secrets.toml")):
-                with self.assertRaises(ValueError) as raised:
-                    resolve_model_config("gpt4o")
+                with patch("pipeline.llms._read_st_secrets_section", return_value={}):
+                    with self.assertRaises(ValueError) as raised:
+                        resolve_model_config("gpt4o")
         self.assertIn("gpt4o", str(raised.exception))
 
     def test_remote_alias_resolves_from_env_vars_without_leaking_key(self):
@@ -48,7 +49,8 @@ class CredentialResolutionTests(unittest.TestCase):
         }
         with patch.dict(os.environ, env, clear=True):
             with patch("pipeline.llms._SECRETS_PATH", Path("/nonexistent/secrets.toml")):
-                config = resolve_model_config("gpt4o")
+                with patch("pipeline.llms._read_st_secrets_section", return_value={}):
+                    config = resolve_model_config("gpt4o")
         self.assertEqual(config.base_url, "https://example.invalid/v1")
         self.assertEqual(config.deployment, "gpt-4o-deployment")
         self.assertEqual(config.api_key, secret_canary)
@@ -56,16 +58,19 @@ class CredentialResolutionTests(unittest.TestCase):
         # The resolved key must never appear inside a raised error message.
         with patch.dict(os.environ, {}, clear=True):
             with patch("pipeline.llms._SECRETS_PATH", Path("/nonexistent/secrets.toml")):
-                with self.assertRaises(ValueError) as raised:
-                    resolve_model_config("gpt4o")
+                with patch("pipeline.llms._read_st_secrets_section", return_value={}):
+                    with self.assertRaises(ValueError) as raised:
+                        resolve_model_config("gpt4o")
         self.assertNotIn(secret_canary, str(raised.exception))
 
     def test_local_alias_falls_back_to_local_server_defaults(self):
         with patch.dict(os.environ, {}, clear=True):
             with patch("pipeline.llms._SECRETS_PATH", Path("/nonexistent/secrets.toml")):
-                config = resolve_model_config("local1")
+                with patch("pipeline.llms._read_st_secrets_section", return_value={}):
+                    config = resolve_model_config("local1")
         self.assertTrue(config.base_url.startswith("http://localhost"))
         self.assertEqual(config.deployment, "local1")
+
 
     def test_unknown_alias_is_rejected(self):
         with self.assertRaises(ValueError):
