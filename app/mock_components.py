@@ -1,7 +1,6 @@
 """
-Mock components and Pydantic schemas for Track C (Clinician UI/UX).
-Provides full scaffolding and mock implementations for Phase 0 & Phase 1,
-and seamless adapter to live modules (storage, pipeline, exporters) when integrated.
+Mock components and fixtures for Track C (Clinician UI/UX).
+Adheres strictly to canonical schemas defined in schemas/instruction_packet.py.
 """
 
 from __future__ import annotations
@@ -13,82 +12,16 @@ from datetime import datetime, timezone
 from typing import List, Optional
 
 import textstat
-from pydantic import BaseModel, Field
 
-# ---------------------------------------------------------------------------
-# Canonical Pydantic Data Schemas (as specified in specs/02_TRACK_B_DATA_AND_STORAGE.md)
-# ---------------------------------------------------------------------------
-
-class MedicationOrder(BaseModel):
-    name: str
-    dose: str
-    route: str = "oral"
-    frequency: str
-    special_instructions: str = ""
-
-
-class ClinicalOrders(BaseModel):
-    order_id: str = "ORD-SCD-01"
-    order_version: str = "v1.2.0"
-    patient_id: str = "SYN-PED-001"
-    patient_age: str = "8 years old"
-    diagnosis: str = "Sickle Cell Disease with acute vaso-occlusive pain"
-    medications: List[MedicationOrder] = Field(default_factory=list)
-    urgent_fever_threshold: str = "100.4°F"
-    fever_threshold_emergency: str = "101.0°F"
-    phone_clinic: str = "901-595-3300"
-    phone_triage_247: str = "901-595-3300"
-    phone_emergency: str = "911"
-
-
-class SafetyJudgeResult(BaseModel):
-    overall_verdict: str = "PASS"  # PASS | NEEDS_REVIEW | FLAGGED_FOR_REVIEW
-    factual_drift_detected: bool = False
-    omitted_red_flags: List[str] = Field(default_factory=list)
-    contradictory_advice: List[str] = Field(default_factory=list)
-    clinical_risk_score: float = 0.0
-    explanation: str = "No critical omissions or dosage contradictions detected."
-
-
-class EvaluationMetrics(BaseModel):
-    fkgl_score: float = 5.8
-    fkgl_target_met: bool = True
-    verbatim_matches: List[str] = Field(default_factory=list)
-    verbatim_mismatches: List[str] = Field(default_factory=list)
-    verbatim_match_percent: float = 100.0
-    safety_judge: SafetyJudgeResult = Field(default_factory=SafetyJudgeResult)
-
-
-class InstructionPacket(BaseModel):
-    packet_id: str = Field(default_factory=lambda: f"PKT-{uuid.uuid4().hex[:8].upper()}")
-    condition: str = "sickle_cell_pain"
-    module_version: str = "v1.2.0"
-    order_version: str = "v1.2.0"
-    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-    status: str = "PENDING"  # PENDING | APPROVED | EDITED_AND_APPROVED | REJECTED_DRIFT
-    rejection_reason: Optional[str] = None
-    original_instructions: str = ""
-    clinical_orders: ClinicalOrders = Field(default_factory=ClinicalOrders)
-    simplified_en: str = ""
-    clinician_edited_en: Optional[str] = None
-    translated_es: str = ""
-    back_translated_en: str = ""
-    metrics: EvaluationMetrics = Field(default_factory=EvaluationMetrics)
-    llm1_model: str = "gpt52"
-    llm2_model: str = "gpt4o"
-    physician_decision: Optional[str] = None
-    pdf_annotation: Optional[str] = None
-
-
-def get_physician_annotation(packet: InstructionPacket) -> str:
-    """Helper returning standardized physician decision status."""
-    if packet.status == "APPROVED":
-        return "Approved by physician"
-    elif packet.status == "EDITED_AND_APPROVED":
-        return "Edited and approved by physician"
-    elif packet.status == "REJECTED_DRIFT":
-        return "Rejected by physician"
-    return "Pending physician review"
+# Authoritative schemas
+from schemas.instruction_packet import (
+    ClinicalOrders,
+    EvaluationMetrics,
+    InstructionPacket,
+    MedicationOrder,
+    SafetyJudgeResult,
+    get_physician_annotation,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -108,14 +41,14 @@ def extract_verbatim_tokens(orders: ClinicalOrders) -> List[str]:
             tokens.append(med.dose.strip())
     if orders.urgent_fever_threshold:
         tokens.append(orders.urgent_fever_threshold.strip())
-    if orders.fever_threshold_emergency:
-        tokens.append(orders.fever_threshold_emergency.strip())
-    if orders.phone_clinic:
-        tokens.append(orders.phone_clinic.strip())
-    if orders.phone_triage_247:
-        tokens.append(orders.phone_triage_247.strip())
-    if orders.phone_emergency:
-        tokens.append(orders.phone_emergency.strip())
+    if orders.emergency_fever_threshold:
+        tokens.append(orders.emergency_fever_threshold.strip())
+    if orders.daytime_phone:
+        tokens.append(orders.daytime_phone.strip())
+    if orders.after_hours_phone:
+        tokens.append(orders.after_hours_phone.strip())
+    if orders.emergency_phone:
+        tokens.append(orders.emergency_phone.strip())
     return tokens
 
 
@@ -174,7 +107,6 @@ def evaluate_text_verbatim_and_fkgl(
 
     return EvaluationMetrics(
         fkgl_score=fkgl,
-        fkgl_target_met=fkgl_met,
         verbatim_matches=matches,
         verbatim_mismatches=mismatches,
         verbatim_match_percent=match_pct,
@@ -237,7 +169,7 @@ MOCK_ORDERS = {
         order_id="ORD-SCD-01",
         order_version="v1.2.0",
         patient_id="SYN-PED-001",
-        patient_age="8 years old",
+        age="8 years old",
         diagnosis="Sickle Cell Disease with acute vaso-occlusive pain",
         medications=[
             MedicationOrder(
@@ -256,16 +188,16 @@ MOCK_ORDERS = {
             ),
         ],
         urgent_fever_threshold="100.4°F",
-        fever_threshold_emergency="101.0°F",
-        phone_clinic="901-595-3300",
-        phone_triage_247="901-595-3300",
-        phone_emergency="911",
+        emergency_fever_threshold="101.0°F",
+        daytime_phone="901-595-3300",
+        after_hours_phone="901-595-3300",
+        emergency_phone="911",
     ),
     "fever_neutropenia": ClinicalOrders(
         order_id="ORD-FN-01",
         order_version="v1.2.0",
         patient_id="SYN-PED-002",
-        patient_age="5 years old",
+        age="5 years old",
         diagnosis="B-ALL (Acute Lymphoblastic Leukemia) with post-chemo neutropenia",
         medications=[
             MedicationOrder(
@@ -277,16 +209,16 @@ MOCK_ORDERS = {
             ),
         ],
         urgent_fever_threshold="100.4°F",
-        fever_threshold_emergency="101.0°F",
-        phone_clinic="901-595-3300",
-        phone_triage_247="901-595-3300",
-        phone_emergency="911",
+        emergency_fever_threshold="101.0°F",
+        daytime_phone="901-595-3300",
+        after_hours_phone="901-595-3300",
+        emergency_phone="911",
     ),
     "chemo_nausea_hydration": ClinicalOrders(
         order_id="ORD-CNH-01",
         order_version="v1.2.0",
         patient_id="SYN-PED-003",
-        patient_age="12 years old",
+        age="12 years old",
         diagnosis="Osteosarcoma post-cisplatin infusion",
         medications=[
             MedicationOrder(
@@ -298,10 +230,10 @@ MOCK_ORDERS = {
             ),
         ],
         urgent_fever_threshold="100.4°F",
-        fever_threshold_emergency="101.0°F",
-        phone_clinic="901-595-3300",
-        phone_triage_247="901-595-3300",
-        phone_emergency="911",
+        emergency_fever_threshold="101.0°F",
+        daytime_phone="901-595-3300",
+        after_hours_phone="901-595-3300",
+        emergency_phone="911",
     ),
 }
 
@@ -343,8 +275,8 @@ def run_mock_pipeline(
             f"• Call immediately if temperature reaches {urg_temp} or higher.\n"
             f"• Call if your child has chest pain, fast breathing, or sudden tiredness.\n\n"
             f"4. Who to call:\n"
-            f"• Day or night clinic phone: {orders.phone_clinic}.\n"
-            f"• If your child cannot wake up, call {orders.phone_emergency} right away."
+            f"• Day or night clinic phone: {orders.daytime_phone}.\n"
+            f"• If your child cannot wake up, call {orders.emergency_phone} right away."
         )
 
         translated_es = (
@@ -358,8 +290,8 @@ def run_mock_pipeline(
             f"• Llame de inmediato si la temperatura llega a {urg_temp} o más.\n"
             f"• Llame si su hijo tiene dolor en el pecho o respiración rápida.\n\n"
             f"4. A quién llamar:\n"
-            f"• Teléfono de la clínica de día o de noche: {orders.phone_clinic}.\n"
-            f"• Si su hijo no se despierta, llame al {orders.phone_emergency} de inmediato."
+            f"• Teléfono de la clínica de día o de noche: {orders.daytime_phone}.\n"
+            f"• Si su hijo no se despierta, llame al {orders.emergency_phone} de inmediato."
         )
 
         back_translated_en = (
@@ -373,13 +305,13 @@ def run_mock_pipeline(
             f"• Call immediately if temperature reaches {urg_temp} or higher.\n"
             f"• Call if child has chest pain or fast breathing.\n\n"
             f"4. Contact numbers:\n"
-            f"• Clinic day and night phone: {orders.phone_clinic}.\n"
-            f"• If child does not wake up, call {orders.phone_emergency} right away."
+            f"• Clinic day and night phone: {orders.daytime_phone}.\n"
+            f"• If child does not wake up, call {orders.emergency_phone} right away."
         )
 
     elif condition == "fever_neutropenia":
         urg_temp = orders.urgent_fever_threshold
-        emg_temp = orders.fever_threshold_emergency
+        emg_temp = orders.emergency_fever_threshold
         if drift_mode == "Altered Fever Threshold":
             urg_temp = "104.5°F"
             emg_temp = "105.0°F"
@@ -394,8 +326,8 @@ def run_mock_pipeline(
             f"• If fever reaches {urg_temp} or {emg_temp}, bring your child to the hospital immediately.\n"
             f"• Your child must get antibiotics within 60 minutes.\n\n"
             f"3. Contact numbers:\n"
-            f"• Call 24/7 triage clinic immediately at {orders.phone_triage_247}.\n"
-            f"• For severe breathing problems or extreme sleepiness, call {orders.phone_emergency}."
+            f"• Call 24/7 triage clinic immediately at {orders.after_hours_phone}.\n"
+            f"• For severe breathing problems or extreme sleepiness, call {orders.emergency_phone}."
         )
 
         translated_es = (
@@ -408,8 +340,8 @@ def run_mock_pipeline(
             f"• Si la fiebre llega a {urg_temp} o {emg_temp}, traiga a su hijo al hospital de inmediato.\n"
             f"• Su hijo debe recibir antibióticos en menos de 60 minutos.\n\n"
             f"3. Números de contacto:\n"
-            f"• Llame de inmediato al teléfono de triaje las 24 horas al {orders.phone_triage_247}.\n"
-            f"• Si tiene dificultad grave para respirar, llame al {orders.phone_emergency}."
+            f"• Llame de inmediato al teléfono de triaje las 24 horas al {orders.after_hours_phone}.\n"
+            f"• Si tiene dificultad grave para respirar, llame al {orders.emergency_phone}."
         )
 
         back_translated_en = (
@@ -422,8 +354,8 @@ def run_mock_pipeline(
             f"• If fever reaches {urg_temp} or {emg_temp}, bring your child to hospital right away.\n"
             f"• Child must receive antibiotics within 60 minutes.\n\n"
             f"3. Emergency numbers:\n"
-            f"• Call 24-hour triage immediately at {orders.phone_triage_247}.\n"
-            f"• For severe trouble breathing, call {orders.phone_emergency}."
+            f"• Call 24-hour triage immediately at {orders.after_hours_phone}.\n"
+            f"• For severe trouble breathing, call {orders.emergency_phone}."
         )
 
     else:  # chemo_nausea_hydration
@@ -446,8 +378,8 @@ def run_mock_pipeline(
             f"• Call if no wet diapers or urination for 12 hours.\n"
             f"• Call if fever reaches {orders.urgent_fever_threshold}.\n\n"
             f"4. Contact phone numbers:\n"
-            f"• Daytime clinic phone: {orders.phone_clinic}.\n"
-            f"• In severe emergency, call {orders.phone_emergency}."
+            f"• Daytime clinic phone: {orders.daytime_phone}.\n"
+            f"• In severe emergency, call {orders.emergency_phone}."
         )
 
         translated_es = (
@@ -463,8 +395,8 @@ def run_mock_pipeline(
             f"• Llame si no moja pañales o no orina durante 12 horas.\n"
             f"• Llame si la fiebre llega a {orders.urgent_fever_threshold}.\n\n"
             f"4. Teléfonos de contacto:\n"
-            f"• Teléfono de la clínica de día: {orders.phone_clinic}.\n"
-            f"• En emergencias graves, llame al {orders.phone_emergency}."
+            f"• Teléfono de la clínica de día: {orders.daytime_phone}.\n"
+            f"• En emergencias graves, llame al {orders.emergency_phone}."
         )
 
         back_translated_en = (
@@ -480,31 +412,26 @@ def run_mock_pipeline(
             f"• Call if no wet diapers or urine for 12 hours.\n"
             f"• Call if fever hits {orders.urgent_fever_threshold}.\n\n"
             f"4. Contact numbers:\n"
-            f"• Daytime clinic: {orders.phone_clinic}.\n"
-            f"• Severe emergency: call {orders.phone_emergency}."
+            f"• Daytime clinic: {orders.daytime_phone}.\n"
+            f"• Severe emergency: call {orders.emergency_phone}."
         )
 
     # Evaluate metrics
     metrics = evaluate_text_verbatim_and_fkgl(simplified_en, orders, drift_mode=drift_mode)
 
     packet = InstructionPacket(
+        packet_id=f"PKT-{uuid.uuid4().hex[:8].upper()}",
         condition=condition,
         module_version=module_version,
         order_version=orders.order_version,
         status="PENDING",
-        original_instructions=raw_template,
+        original_clinical_text=raw_template,
         clinical_orders=orders,
         simplified_en=simplified_en,
-        clinician_edited_en=simplified_en,
         translated_es=translated_es,
         back_translated_en=back_translated_en,
-        metrics=metrics,
-        llm1_model=llm1_model,
-        llm2_model=llm2_model,
-        physician_decision=get_physician_annotation(
-            InstructionPacket(status="PENDING")
-        ),
-        pdf_annotation="Pending physician review",
+        evaluation_metrics=metrics,
+        physician_decision="Pending physician review",
     )
     return packet
 
@@ -519,7 +446,7 @@ _IN_MEMORY_LIBRARY: List[InstructionPacket] = []
 def save_to_gold_library(packet: InstructionPacket) -> None:
     """Save reviewed packet to in-memory audit store and optional local JSONL."""
     packet.physician_decision = get_physician_annotation(packet)
-    packet.pdf_annotation = packet.physician_decision
+    packet.reviewed_at = datetime.now(timezone.utc).isoformat()
     _IN_MEMORY_LIBRARY.append(packet)
 
 
@@ -626,14 +553,14 @@ def generate_handout_pdf(packet: InstructionPacket) -> bytes:
     # Patient Meta
     meta_text = (
         f"<b>Patient ID:</b> {packet.clinical_orders.patient_id} | "
-        f"<b>Age:</b> {packet.clinical_orders.patient_age} | "
+        f"<b>Age:</b> {packet.clinical_orders.age or 'N/A'} | "
         f"<b>Diagnosis:</b> {packet.clinical_orders.diagnosis}"
     )
     elements.append(Paragraph(meta_text, cell_style))
     elements.append(Spacer(1, 10))
 
     # 2-Column Side-by-Side: Left (English), Right (Spanish)
-    en_content = (packet.clinician_edited_en or packet.simplified_en).replace("\n", "<br/>")
+    en_content = packet.simplified_en.replace("\n", "<br/>")
     es_content = packet.translated_es.replace("\n", "<br/>")
 
     col_en = Paragraph(f"<b>ENGLISH (5th–6th Grade)</b><br/><br/>{en_content}", cell_style)

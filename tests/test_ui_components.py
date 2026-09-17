@@ -29,7 +29,7 @@ class TestTrackCComponents(unittest.TestCase):
             order_id="ORD-SCD-01",
             order_version="v1.2.0",
             patient_id="SYN-PED-001",
-            patient_age="8 years old",
+            age="8 years old",
             diagnosis="Sickle Cell Disease with acute vaso-occlusive pain",
             medications=[
                 MedicationOrder(
@@ -45,15 +45,16 @@ class TestTrackCComponents(unittest.TestCase):
                     frequency="every 4 hours as needed for severe pain",
                 ),
             ],
-            fever_threshold_urgent="100.4°F",
-            fever_threshold_emergency="101.0°F",
-            phone_clinic="901-595-3300",
-            phone_triage_247="901-595-3300",
-            phone_emergency="911",
+            urgent_fever_threshold="100.4°F",
+            emergency_fever_threshold="101.0°F",
+            daytime_phone="901-595-3300",
+            after_hours_phone="901-595-3300",
+            emergency_phone="911",
         )
 
     def test_schema_instantiation(self):
         packet = InstructionPacket(
+            packet_id="PKT-TEST001",
             condition="sickle_cell_pain",
             clinical_orders=self.orders,
             simplified_en="Sample text with 200 mg and 100.4°F.",
@@ -61,12 +62,13 @@ class TestTrackCComponents(unittest.TestCase):
         self.assertTrue(packet.packet_id.startswith("PKT-"))
         self.assertEqual(packet.status, "PENDING")
         self.assertEqual(packet.clinical_orders.patient_id, "SYN-PED-001")
+        self.assertEqual(packet.clinical_orders.age, "8 years old")
 
     def test_physician_annotation_logic(self):
-        p_pending = InstructionPacket(status="PENDING")
-        p_approved = InstructionPacket(status="APPROVED")
-        p_edited = InstructionPacket(status="EDITED_AND_APPROVED")
-        p_rejected = InstructionPacket(status="REJECTED_DRIFT")
+        p_pending = InstructionPacket(packet_id="P1", condition="c", clinical_orders=self.orders, status="PENDING")
+        p_approved = InstructionPacket(packet_id="P2", condition="c", clinical_orders=self.orders, status="APPROVED")
+        p_edited = InstructionPacket(packet_id="P3", condition="c", clinical_orders=self.orders, status="EDITED_AND_APPROVED")
+        p_rejected = InstructionPacket(packet_id="P4", condition="c", clinical_orders=self.orders, status="REJECTED_DRIFT")
 
         self.assertEqual(get_physician_annotation(p_pending), "Pending physician review")
         self.assertEqual(get_physician_annotation(p_approved), "Approved by physician")
@@ -105,9 +107,9 @@ class TestTrackCComponents(unittest.TestCase):
             orders=self.orders,
             drift_mode="Altered Medication Dose",
         )
-        self.assertTrue(p_drift_dose.metrics.safety_judge.factual_drift_detected)
-        self.assertEqual(p_drift_dose.metrics.safety_judge.overall_verdict, "FLAGGED_FOR_REVIEW")
-        self.assertIn("200 mg", p_drift_dose.metrics.verbatim_mismatches)
+        self.assertTrue(p_drift_dose.evaluation_metrics.safety_judge.factual_drift_detected)
+        self.assertEqual(p_drift_dose.evaluation_metrics.safety_judge.overall_verdict, "FLAGGED_FOR_REVIEW")
+        self.assertIn("200 mg", p_drift_dose.evaluation_metrics.verbatim_mismatches)
 
         # Test Altered Fever Threshold
         p_drift_fever = run_mock_pipeline(
@@ -116,8 +118,8 @@ class TestTrackCComponents(unittest.TestCase):
             orders=self.orders,
             drift_mode="Altered Fever Threshold",
         )
-        self.assertTrue(p_drift_fever.metrics.safety_judge.factual_drift_detected)
-        self.assertEqual(p_drift_fever.metrics.safety_judge.overall_verdict, "FLAGGED_FOR_REVIEW")
+        self.assertTrue(p_drift_fever.evaluation_metrics.safety_judge.factual_drift_detected)
+        self.assertEqual(p_drift_fever.evaluation_metrics.safety_judge.overall_verdict, "FLAGGED_FOR_REVIEW")
 
     def test_mock_pipeline_generation(self):
         packet = run_mock_pipeline(
@@ -153,7 +155,8 @@ class TestTrackCComponents(unittest.TestCase):
 
         # Test Edited & Approved PDF
         packet.status = "EDITED_AND_APPROVED"
-        packet.clinician_edited_en = "Custom modified instructions by clinician."
+        packet.simplified_en = "Custom modified instructions by clinician."
+        packet.edited_by_physician = True
         pdf_edited = generate_handout_pdf(packet)
         self.assertTrue(pdf_edited.startswith(b"%PDF"))
 
@@ -162,6 +165,81 @@ class TestTrackCComponents(unittest.TestCase):
         packet.rejection_reason = "Unsafe dosage alteration"
         pdf_rejected = generate_handout_pdf(packet)
         self.assertTrue(pdf_rejected.startswith(b"%PDF"))
+
+    def test_streamlit_app_headless_launch_and_generate(self):
+        """Simulate Streamlit clinician review app execution and packet generation."""
+        from streamlit.testing.v1 import AppTest
+
+        at = AppTest.from_file("../app/clinician_ui.py")
+        at.run()
+        self.assertEqual(len(at.exception), 0, f"AppTest raised exceptions on launch: {at.exception}")
+
+        # Click Generate Instructions
+        gen_btn = None
+        for b in at.button:
+            if "Generate" in b.label:
+                gen_btn = b
+                break
+        self.assertIsNotNone(gen_btn, "Generate Instructions button not found in sidebar")
+        gen_btn.click().run()
+        self.assertEqual(len(at.exception), 0, f"AppTest raised exceptions on generate: {at.exception}")
+
+        # Verify 4-way comparative pane rendered
+        markdown_texts = [m.value for m in at.markdown]
+        self.assertTrue(any("1. Original Clinical Orders" in t for t in markdown_texts))
+        self.assertTrue(any("2. Simplified English" in t for t in markdown_texts))
+        self.assertTrue(any("3. Spanish Handout" in t for t in markdown_texts))
+        self.assertTrue(any("4. Back-Translated English" in t for t in markdown_texts))
+
+        # Verify action buttons exist
+        button_labels = [b.label for b in at.button]
+        self.assertTrue(any("Save & Check Edits" in l for l in button_labels))
+        self.assertTrue(any("Approve & Publish" in l for l in button_labels))
+        self.assertTrue(any("Reject & Log Drift" in l for l in button_labels))
+
+        # Verify telemetry metrics for both FKGL and Verbatim score
+        metric_labels = [m.label for m in at.metric]
+        self.assertTrue(any("FKGL Readability" in l for l in metric_labels), f"FKGL metric not found in: {metric_labels}")
+        self.assertTrue(any("Verbatim Score" in l for l in metric_labels), f"Verbatim metric not found in: {metric_labels}")
+
+    def test_streamlit_app_inline_edit_and_approve(self):
+        """Simulate Streamlit inline editing, re-checking, and approval gate."""
+        from streamlit.testing.v1 import AppTest
+
+        at = AppTest.from_file("../app/clinician_ui.py")
+        at.run()
+        for b in at.button:
+            if "Generate" in b.label:
+                b.click().run()
+                break
+
+        # Edit text in inline clinical editor
+        txt_area = None
+        for t in at.text_area:
+            if t.key == "txt_clinician_en":
+                txt_area = t
+                break
+        self.assertIsNotNone(txt_area, "Inline editor text area not found")
+        txt_area.input("Updated clinician verified instructions: 200 mg and 100.4°F.").run()
+
+        # Save & check edits
+        for b in at.button:
+            if "Save & Check Edits" in b.label:
+                b.click().run()
+                break
+        self.assertEqual(len(at.exception), 0)
+
+        # Verify telemetry metrics updated and present post-edit
+        metric_labels_after_edit = [m.label for m in at.metric]
+        self.assertTrue(any("Verbatim Score" in l for l in metric_labels_after_edit))
+        self.assertTrue(any("FKGL Readability" in l for l in metric_labels_after_edit))
+
+        # Approve & publish
+        for b in at.button:
+            if "Approve & Publish" in b.label:
+                b.click().run()
+                break
+        self.assertEqual(len(at.exception), 0)
 
 
 if __name__ == "__main__":
