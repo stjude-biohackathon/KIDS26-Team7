@@ -6,8 +6,13 @@ from schemas.instruction_packet import InstructionPacket
 
 
 def approval_blockers(packet: InstructionPacket, edited_text: str, checked_packet: dict | None,
-                      spanish_reviewed: bool) -> list[str]:
-    """Require the exact successfully checked revision and human sign-off."""
+                      spanish_reviewed: bool, spanish_requested: bool = True) -> list[str]:
+    """Require the exact successfully checked revision and human sign-off.
+
+    When ``spanish_requested`` is False the family opted out of a Spanish
+    handout: the bilingual panes must be empty and no translator attestation
+    is required. Otherwise the full bilingual gate applies.
+    """
     reasons = []
     if packet.is_simulation:
         reasons.append("Synthetic drift simulations cannot be approved for patient use.")
@@ -32,12 +37,16 @@ def approval_blockers(packet: InstructionPacket, edited_text: str, checked_packe
     if (judge is None or judge.overall_verdict != 'PASS' or judge.factual_drift_detected
             or judge.omitted_red_flags or judge.contradictory_advice):
         reasons.append('Safety review must pass without unresolved findings.')
-    for label, text in [('English', packet.simplified_en), ('Spanish', packet.translated_es),
-                        ('back-translation', packet.back_translated_en)]:
+    panes = [('English', packet.simplified_en)]
+    if spanish_requested:
+        panes += [('Spanish', packet.translated_es), ('back-translation', packet.back_translated_en)]
+    elif packet.translated_es.strip() or packet.back_translated_en.strip():
+        reasons.append('Spanish output is present but was not requested; regenerate without translation.')
+    for label, text in panes:
         if (not text.strip() or check_verbatim(text, packet.clinical_orders)[1]
                 or content_findings(source, text, packet.clinical_orders)[1]):
             reasons.append(f'{label} is missing or does not preserve required clinical values.')
-    if not spanish_reviewed:
+    if spanish_requested and not spanish_reviewed:
         reasons.append('An authorized medical translator or credentialed bilingual clinician must verify Spanish.')
     return reasons
 

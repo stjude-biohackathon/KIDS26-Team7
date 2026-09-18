@@ -57,7 +57,7 @@ def _evaluate_outputs(
 
 def _enforce_deterministic_safety_gate(
     metrics: EvaluationMetrics, spanish: str, back: str, orders: ClinicalOrders,
-    source: str = "", english: str = "",
+    source: str = "", english: str = "", require_bilingual: bool = True,
 ) -> EvaluationMetrics:
     """Let regex parity checks veto the live judge, never the other way round.
 
@@ -76,7 +76,9 @@ def _enforce_deterministic_safety_gate(
         blocking.append("English verbatim mismatch")
     for label, text in (("Spanish", spanish), ("Back-translation", back)):
         if not text:
-            blocking.append(f"{label} pane unavailable")
+            # English-only reviews legitimately omit the bilingual panes.
+            if require_bilingual:
+                blocking.append(f"{label} pane unavailable")
         elif check_verbatim(text, orders)[1] or content_findings(source, text, orders)[1]:
             blocking.append(f"{label} verbatim mismatch")
     if blocking:
@@ -200,6 +202,7 @@ class PipelineOrchestrator:
         *,
         module_version: str,
         condition: str,
+        translate: bool = True,
     ) -> InstructionPacket:
         """Phase 2: run the real LLM1/LLM2 pipeline instead of binding templates.
 
@@ -208,6 +211,10 @@ class PipelineOrchestrator:
         and runs the Safety Judge audit. FKGL/verbatim telemetry is still
         computed locally by `pipeline.evaluator`, per specs/01 Section 2.2 —
         only the Safety Judge verdict comes from the live LLM2 call.
+
+        When ``translate`` is False, the Spanish translation and back-translation
+        steps are skipped entirely and both panes remain empty; the family does
+        not need a Spanish handout, so no unauthorized translation is produced.
 
         Raises `ValueError` if inputs are missing/invalid, or if the LLM1
         simplification/translation calls fail; the Safety Judge call alone is
@@ -235,15 +242,20 @@ class PipelineOrchestrator:
             previous_fkgl = metrics.fkgl_score
         else:
             raise ReadabilityTargetError(metrics.fkgl_score, 3)
-        spanish = live_llm.translate_to_spanish(llm1_client, llm1_deployment, english)
-
+        spanish = ""
+        back = ""
         llm2_client, llm2_deployment = get_client(self.llm2_model)
-        back = live_llm.back_translate_to_english(llm2_client, llm2_deployment, spanish)
+        if translate:
+            spanish = live_llm.translate_to_spanish(llm1_client, llm1_deployment, english)
+            back = live_llm.back_translate_to_english(llm2_client, llm2_deployment, spanish)
 
         metrics.safety_judge = live_llm.judge_safety(
             llm2_client, llm2_deployment, composite_template_text, english, saved_orders
         )
-        metrics = _enforce_deterministic_safety_gate(metrics, spanish, back, saved_orders, source=source, english=english)
+        metrics = _enforce_deterministic_safety_gate(
+            metrics, spanish, back, saved_orders, source=source, english=english,
+            require_bilingual=translate,
+        )
 
         return InstructionPacket(
             packet_id=str(uuid4()),
@@ -260,13 +272,15 @@ class PipelineOrchestrator:
         )
 
     def recheck_edits_live(
-        self, packet: InstructionPacket, edited_en: str
+        self, packet: InstructionPacket, edited_en: str, *, translate: bool = True
     ) -> InstructionPacket:
         """Phase 2: re-translate/re-judge a physician's edit via live LLMs.
 
         Returns a new pending revision; the caller keeps the original packet
         (same contract as `recheck_edits`). Unlike the offline path, the
-        bilingual panes are regenerated rather than left empty.
+        bilingual panes are regenerated rather than left empty — unless
+        ``translate`` is False, in which case the English-only review keeps
+        both bilingual panes empty.
         """
         if not edited_en.strip():
             raise ValueError("Edited instruction text must not be empty.")
@@ -276,13 +290,16 @@ class PipelineOrchestrator:
         revision.created_at = datetime.now(timezone.utc).isoformat()
         revision.simplified_en = edited_en
 
-        llm1_client, llm1_deployment = get_client(self.llm1_model)
-        revision.translated_es = live_llm.translate_to_spanish(llm1_client, llm1_deployment, edited_en)
-
         llm2_client, llm2_deployment = get_client(self.llm2_model)
-        revision.back_translated_en = live_llm.back_translate_to_english(
-            llm2_client, llm2_deployment, revision.translated_es
-        )
+        if translate:
+            llm1_client, llm1_deployment = get_client(self.llm1_model)
+            revision.translated_es = live_llm.translate_to_spanish(llm1_client, llm1_deployment, edited_en)
+            revision.back_translated_en = live_llm.back_translate_to_english(
+                llm2_client, llm2_deployment, revision.translated_es
+            )
+        else:
+            revision.translated_es = ""
+            revision.back_translated_en = ""
 
         metrics = evaluate_text(edited_en, revision.clinical_orders)
         metrics.safety_judge = live_llm.judge_safety(
@@ -291,6 +308,7 @@ class PipelineOrchestrator:
         metrics = _enforce_deterministic_safety_gate(
             metrics, revision.translated_es, revision.back_translated_en, revision.clinical_orders,
             source=compose_clinical_text(revision.original_clinical_text, revision.clinical_orders), english=edited_en,
+            require_bilingual=translate,
         )
         revision.evaluation_metrics = metrics
 
