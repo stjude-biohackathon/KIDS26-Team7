@@ -303,7 +303,7 @@ with st.sidebar:
     st.title("CLEAR Controls")
     st.caption("Bilingual Pediatric Discharge Instruction Review")
 
-    st.caption("Live LLM1 simplifies English to FKGL 5.0–6.9, then translates it to Spanish. LLM2 back-translates and checks safety.")
+    st.caption("LLM1 simplifies English to FKGL 5.0–6.9. LLM2 checks safety. Spanish translation and English back-translation run only when requested for the family.")
     st.subheader("1. AI Model Selection")
     model_options = ["gpt52", "gpt4o", "gpt56luna", "kimik3", "copus5", "local1", "local2"]
     
@@ -311,7 +311,7 @@ with st.sidebar:
         "LLM 1 (Simplification & Spanish):",
         options=model_options,
         index=model_options.index("gpt4o"),
-        help="Simplifies English to FKGL 5.0–6.9, then translates it to Spanish with protected clinical values.",
+        help="Simplifies English to FKGL 5.0–6.9, optionally translates it to Spanish with protected clinical values.",
     )
     selected_llm2 = st.selectbox(
         "LLM 2 (Safety Judge & Back-EN):",
@@ -321,7 +321,16 @@ with st.sidebar:
     )
 
     st.divider()
+    if st.button("Refresh Protocols", help="Reload source instructions and orders; clear the current review"):
+        _load_templates_and_orders.clear()
+        st.session_state["review_inputs"] = None
+        st.rerun()
     live_templates, live_orders, load_status = _load_templates_and_orders()
+    if load_status.get("error"):
+        st.error("Clinical data loading failed. " + load_status["error"])
+        st.stop()
+    for warning in load_status.get("warnings", []):
+        st.caption("Source data notice: " + warning)
 
     st.subheader("2. Protocol & Module Version")
     
@@ -363,9 +372,9 @@ with st.sidebar:
     # Do not offer invented historical versions or substitute another condition.
     order_widget_key = hashlib.sha256(base_order.model_dump_json().encode()).hexdigest()
     
-    patient_id = st.text_input("Synthetic Patient ID:", value=base_order.patient_id)
-    age = st.text_input("Patient Age:", value=base_order.age or "8 years old")
-    diagnosis = st.text_input("Module:", value=base_order.diagnosis)
+    patient_id = st.text_input("Synthetic Patient ID:", value=base_order.patient_id, key=f"patient_id_{condition}_{order_widget_key}")
+    age = st.text_input("Patient Age:", value=base_order.age or "8 years old", key=f"age_{condition}_{order_widget_key}")
+    diagnosis = st.text_input("Module:", value=base_order.diagnosis, key=f"diagnosis_{condition}_{order_widget_key}")
 
     # Dynamic Medications
     with st.expander("Prescribed Medications", expanded=False):
@@ -390,25 +399,25 @@ with st.sidebar:
     col_t1, col_t2 = st.columns(2)
     with col_t1:
         fever_urg = st.text_input(
-            "Urgent Fever:",
+            "Urgent Fever:", key=f"urgent_{condition}_{order_widget_key}",
             value=base_order.urgent_fever_threshold or "100.4°F",
         )
     with col_t2:
         fever_emg = st.text_input(
-            "Emergency Fever:",
+            "Emergency Fever:", key=f"emergency_{condition}_{order_widget_key}",
             value=base_order.emergency_fever_threshold or "101.0°F",
         )
 
     daytime_phone = st.text_input(
-        "Daytime Phone:",
+        "Daytime Phone:", key=f"daytime_{condition}_{order_widget_key}",
         value=base_order.daytime_phone or "901-595-3300",
     )
     after_hours_phone = st.text_input(
-        "After-Hours Phone:",
+        "After-Hours Phone:", key=f"after_hours_{condition}_{order_widget_key}",
         value=base_order.after_hours_phone or "901-595-3300",
     )
     emergency_phone = st.text_input(
-        "Emergency Phone:",
+        "Emergency Phone:", key=f"emergency_phone_{condition}_{order_widget_key}",
         value=base_order.emergency_phone or "911",
     )
 
@@ -497,15 +506,22 @@ def _run_generation(want_spanish: bool) -> None:
 # ---------------------------------------------------------------------------
 st.markdown("## Bilingual Pediatric Discharge Instruction Review")
 
-# Reset any stale review when the sidebar module changes so the page follows
-# the current selection immediately.
-if st.session_state.get("active_condition") != condition:
-    st.session_state["active_condition"] = condition
-    st.session_state["current_packet"] = None
-    st.session_state["checked_packet"] = None
-    st.session_state["pdf_bytes"] = None
+# A review belongs to the exact inputs used to generate it. Sidebar changes
+# return to the source preview before any older result can be approved.
+review_inputs = hashlib.sha256(json.dumps({
+    "condition": condition, "module_version": module_version,
+    "source": live_templates[condition][module_version],
+    "orders": active_orders.model_dump(mode="json"),
+    "models": [selected_llm1, selected_llm2], "drift": drift_mode,
+}, sort_keys=True).encode()).hexdigest()
+if st.session_state.get("review_inputs") != review_inputs:
+    st.session_state["review_inputs"] = review_inputs
+    for key in ("current_packet", "checked_packet", "pdf_bytes", "clean_backup_packet",
+                "reject_dialog_packet_id", "edit_check_error"):
+        st.session_state[key] = None
     st.session_state["edits_checked_banner"] = False
-    st.session_state["reject_dialog_packet_id"] = None
+    st.session_state["spanish_requested"] = False
+    st.session_state["txt_clinician_en"] = ""
 
 st.markdown(
     f"**Patient MRN:** `{active_orders.patient_id}` ({active_orders.age or 'N/A'})"
@@ -610,7 +626,7 @@ else:
         elif packet.status == "REJECTED_DRIFT":
             st.error(annotation)
         else:
-            st.warning(f"⏳ {annotation}")
+            st.warning(annotation)
         if st.button("New Generation", help="Discard this review and return to the generate page"):
             st.session_state["current_packet"] = None
             st.session_state["checked_packet"] = None
@@ -620,11 +636,11 @@ else:
             st.rerun()
 
     if metrics.safety_judge and metrics.safety_judge.factual_drift_detected:
-        st.caption(f"<small style='color: #DC2626;'> Safety Alert: {metrics.safety_judge.explanation}</small>", unsafe_allow_html=True)
+        st.warning("Safety Alert: " + metrics.safety_judge.explanation)
 
     # Re-evaluation notice banner if edits were recently checked
     if st.session_state.get("edits_checked_banner", False):
-        st.info("ℹ **Edits re-evaluated and checked.** Status remains `PENDING`. Click **'Approve & publish'** when ready to finalize.")
+        st.info("**Edits re-evaluated and checked.** Status remains `PENDING`. Click **'Approve & publish'** when ready to finalize.")
 
     orig_text = _compose_original_display(
         packet.clinical_orders, packet.original_clinical_text, packet.module_version
@@ -634,7 +650,7 @@ else:
     # Comparative panes: 2 boxes (English-only) or 4 boxes (with Spanish)
     # with a slider to alter the screen-view percentage.
     # ------------------------------------------------------------------
-    if spanish_requested and (packet.translated_es.strip() or packet.back_translated_en.strip()):
+    if spanish_requested:
         original_pct = st.slider(
             "Original view width (%)", min_value=10, max_value=70, value=25,
             help="Adjust how much of the screen the original pane occupies; the remaining panes split the rest evenly.",
@@ -671,7 +687,7 @@ else:
         with col4:
             st.markdown("<div class='col-header'>Back-Translated English (LLM 2)</div>", unsafe_allow_html=True)
             st.markdown(f"<div class='clinical-box'>{escape(packet.back_translated_en)}</div>", unsafe_allow_html=True)
-        st.caption("ℹ Back-translation allows English-speaking clinicians to inspect and verify Spanish translation fidelity.")
+        st.caption("Back-translation allows English-speaking clinicians to inspect and verify Spanish translation fidelity.")
 
     st.divider()
 
@@ -720,7 +736,7 @@ else:
                     st.error("Recheck failed. No approval is available; retry the checks.")
                     st.stop()
                 st.session_state["edit_check_error"] = (
-                    "Translation recheck failed; approval remains blocked. "
+                    "Instruction recheck failed; approval remains blocked. "
                     + describe_model_error(selected_llm1, exc)
                 )
                 st.session_state["edits_checked_banner"] = False
@@ -753,10 +769,11 @@ else:
                 candidate.edited_by_physician = was_edited
                 candidate.physician_decision = get_physician_annotation(candidate)
                 candidate.reviewed_at = datetime.now(timezone.utc).isoformat()
-                candidate.clinician_notes = (
-                    (candidate.clinician_notes or "")
-                    + "\nReviewer attested to authorized Spanish verification for this revision."
-                ).strip()
+                review_note = (
+                    "Reviewer attested to authorized Spanish verification for this revision."
+                    if spanish_requested else "English-only review; Spanish translation was not requested."
+                )
+                candidate.clinician_notes = ((candidate.clinician_notes or "") + "\n" + review_note).strip()
                 try:
                     # Build first: a failed export must not persist an approval.
                     pdf_data = live_pdf_gen(candidate) if HAS_LIVE_PDF else generate_handout_pdf(candidate)
@@ -816,7 +833,7 @@ with st.expander("View versioned library records", expanded=False):
                 "PDF Annotation": get_physician_annotation(r),
                 "Simulation": r.is_simulation,
                 "Timestamp": r.created_at[:19].replace("T", " ") if r.created_at else "",
-                "Condition": r.condition,
+                "Module": MODULE_DISPLAY_NAMES.get(r.condition, r.condition),
                 "Status": r.status,
                 "Physician Decision": r.physician_decision or get_physician_annotation(r),
                 "FKGL Grade": r.evaluation_metrics.fkgl_score if r.evaluation_metrics else 0.0,

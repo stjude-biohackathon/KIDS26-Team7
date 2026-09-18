@@ -34,7 +34,7 @@ class ReviewUiTests(unittest.TestCase):
     def test_unchecked_edit_cannot_publish_or_save(self):
         with offline_app(), patch('storage.gold_library.save_gold_record') as save, patch('storage.gold_library.load_gold_records', return_value=[]):
             at = AppTest.from_file(APP).run()
-            next(b for b in at.button if 'Generate Instructions' in b.label).click().run()
+            next(b for b in at.button if 'Generate Simplified Instructions' in b.label).click().run()
             at.text_area(key='txt_clinician_en').input('Synthetic unchecked text.').run()
             next(b for b in at.button if 'Approve & Publish' in b.label).click().run()
             self.assertEqual(len(at.exception), 0)
@@ -57,7 +57,7 @@ class LoadedSelectorTests(unittest.TestCase):
             self.assertEqual(selections['Clinical Module:'].value, 'new_protocol')
             self.assertEqual(selections['Module Ver:'].options, ['v9.0.0'])
             self.assertEqual(selections['Order Set Ver:'].value, 'v9.3.1')
-            next(b for b in at.button if 'Generate Instructions' in b.label).click().run()
+            next(b for b in at.button if 'Generate Simplified Instructions' in b.label).click().run()
             self.assertEqual(len(at.exception), 0)
             packet = at.session_state['current_packet']
             self.assertEqual(packet.order_version, 'v9.3.1')
@@ -85,7 +85,8 @@ class CheckedApprovalTests(unittest.TestCase):
 
     def launch(self):
         at = AppTest.from_file(APP).run()
-        next(b for b in at.button if 'Generate Instructions' in b.label).click().run()
+        at.checkbox(key='chk_want_spanish').check().run()
+        next(b for b in at.button if 'Generate Simplified Instructions' in b.label).click().run()
         return at
 
     def test_successful_checks_and_human_review_allow_publish(self):

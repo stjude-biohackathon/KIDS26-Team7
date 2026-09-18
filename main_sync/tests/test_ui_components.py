@@ -45,10 +45,13 @@ def offline_app(load_status=None, modules=None):
     def _unavailable(*_args, **_kwargs):
         raise RuntimeError("Live model call disabled in unit tests.")
 
-    def _synthetic_generation(_self, source, orders, *, condition, module_version):
+    def _synthetic_generation(_self, source, orders, *, condition, module_version, translate=True):
         # A synthetic live-service boundary for structural UI tests only.
         if condition in MOCK_MODULES and module_version in MOCK_MODULES[condition]:
-            return run_mock_pipeline(condition, module_version, orders)
+            result = run_mock_pipeline(condition, module_version, orders)
+            if not translate:
+                result.translated_es = result.back_translated_en = ""
+            return result
         from pipeline.orchestrator import PipelineOrchestrator
         return PipelineOrchestrator().generate(source, orders, condition=condition, module_version=module_version)
 
@@ -233,6 +236,7 @@ class TestTrackCComponents(unittest.TestCase):
             at.run()
             self.assertEqual(len(at.exception), 0, f"AppTest raised exceptions on launch: {at.exception}")
 
+            at.checkbox(key="chk_want_spanish").check().run()
             # Click Generate Instructions
             gen_btn = None
             for b in at.button:
@@ -245,10 +249,10 @@ class TestTrackCComponents(unittest.TestCase):
 
             # Verify 4-way comparative pane rendered
             markdown_texts = [m.value for m in at.markdown]
-            self.assertTrue(any("1. Original Clinical Orders" in t for t in markdown_texts))
-            self.assertTrue(any("2. Simplified English" in t for t in markdown_texts))
-            self.assertTrue(any("3. Spanish Handout" in t for t in markdown_texts))
-            self.assertTrue(any("4. Back-Translated English" in t for t in markdown_texts))
+            self.assertTrue(any("Original Clinical Orders" in t for t in markdown_texts))
+            self.assertTrue(any("Simplified English" in t for t in markdown_texts))
+            self.assertTrue(any("Spanish Handout" in t for t in markdown_texts))
+            self.assertTrue(any("Back-Translated English" in t for t in markdown_texts))
 
             # Verify action buttons exist
             button_labels = [b.label for b in at.button]
@@ -342,8 +346,8 @@ class TestLiveProvenanceReporting(unittest.TestCase):
                 at = self._run_app()
         self.assertEqual(len(at.exception), 0, f"AppTest raised: {at.exception}")
         badges = self._badge_markdown(at)
-        self.assertTrue(badges, "Data-source badge not rendered")
-        self.assertIn("GitHub App (In-Memory, No Local Copy)", badges[0])
+        self.assertFalse(badges, "The removed data-stream panel must stay hidden")
+        self.assertFalse(at.error)
 
     def test_badge_reports_failed_live_load_instead_of_green_live_badge(self):
         from unittest.mock import patch
@@ -369,15 +373,9 @@ class TestLiveProvenanceReporting(unittest.TestCase):
                     at = self._run_app()
         self.assertEqual(len(at.exception), 0, f"AppTest raised: {at.exception}")
         badges = self._badge_markdown(at)
-        self.assertTrue(badges, "Data-source badge not rendered")
-        # Credentials are present but the load failed: must NOT claim live.
-        self.assertNotIn("GitHub App (In-Memory, No Local Copy)", badges[0])
-        self.assertIn("live load failed", badges[0])
-        captions = [c.value for c in at.caption]
-        self.assertTrue(
-            any("ConnectionError" in c for c in captions),
-            f"Failure reason not surfaced in captions: {captions}",
-        )
+        self.assertFalse(badges)
+        self.assertTrue(any("ConnectionError" in e.value for e in at.error))
+        self.assertFalse(any("Generate" in b.label for b in at.button))
 
     def test_upstream_data_quality_warnings_are_surfaced(self):
         from unittest.mock import patch

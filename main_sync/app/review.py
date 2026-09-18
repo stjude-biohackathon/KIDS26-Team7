@@ -17,7 +17,7 @@ def approval_blockers(packet: InstructionPacket, edited_text: str, checked_packe
     if packet.is_simulation:
         reasons.append("Synthetic drift simulations cannot be approved for patient use.")
     if packet.status != 'PENDING':
-        reasons.append('This packet has already been reviewed. Generate or check a new revision.')
+        reasons.append('These instructions have already been reviewed. Generate or check a new revision.')
     if edited_text != packet.simplified_en or checked_packet != packet.model_dump(mode='json'):
         reasons.append('Run Save & Check Edits successfully on the current text before approval.')
     from pipeline.orchestrator import compose_clinical_text

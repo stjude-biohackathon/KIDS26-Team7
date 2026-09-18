@@ -6,7 +6,7 @@
 ## 1. Executive Summary & Objectives
 
 ### Purpose
-Build and demonstrate a clinician-in-the-loop prototype using supplied, versioned clinical English and structured orders to produce bilingual (English & Spanish) handouts. The composer binds vetted source wording and orders, then LLM1 simplifies English to **FKGL 5.0–6.9**, measured after protected values are restored. Generation allows three attempts and fails explicitly if the benchmark is unmet. Translation follows a passing candidate; safety judgment and clinician approval remain mandatory.
+Build and demonstrate a clinician-in-the-loop prototype using supplied, versioned clinical English and structured orders to produce bilingual (English & Spanish) handouts. The composer binds vetted source wording and orders, then LLM1 simplifies English to **FKGL 5.0–6.9**, measured after protected values are restored. Generation allows three attempts and fails explicitly if the benchmark is unmet. Spanish translation and English back-translation follow a passing candidate only when the family translation checkbox is selected. English-only is the UI default; safety judgment and clinician approval remain mandatory in both paths.
 
 ### Key Success Metrics for the 2-Day Demo
 1. **End-to-End Execution across 3 Core Modules**:
@@ -44,12 +44,12 @@ Build and demonstrate a clinician-in-the-loop prototype using supplied, versione
                       │
                       ▼
             ┌──────────────────┐
-            │ LLM 1: Translate │ (EN -> Spanish)
+            │ LLM 1: Translate │ (EN -> Spanish, only if requested)
             └─────────┬────────┘
                       │
                       ▼
             ┌──────────────────┐
-            │ LLM 2: Back-Trans│ (Spanish -> EN)
+            │ LLM 2: Back-Trans│ (Spanish -> EN, only if requested)
             └─────────┬────────┘
                       │
                       ▼
@@ -124,7 +124,7 @@ The project progresses through 4 iterative synchronization points:
   - Evaluates factual drift, red-flag omission, and semantic contradictions.
   - Assigns `PASS`, `NEEDS_REVIEW`, or `FLAGGED_FOR_REVIEW`.
 - **Component 4 (Bilingual Translation)**:
-  - Forward Spanish translation (LLM1) and back-translation to English (LLM2) to expose semantic drift.
+  - Optional forward Spanish translation (LLM1) and back-translation to English (LLM2) expose semantic drift. The UI explicitly passes `translate=False` by default and skips both translation calls, including on edit rechecks. LLM2 still judges English safety.
 - **Component 5 (Scenario C Drift Simulator)**:
   - Injects doubled doses, altered fever thresholds, contradictory advice, and omitted source warnings into independent synthetic revisions. Deterministic evaluation inspects actual changes. Simulation packets cannot be approved for patient use.
   - Model inputs mask numeric values and units with sentinels; translation restoration rejects missing, duplicated, unknown markers and invented numeric values. Incomplete/malformed judge audits are flagged. New-value and FKGL checks can veto a passing model judge. Warning meaning is checked by the judge and clinician, allowing legitimate rephrasing; reported omissions block approval even with a PASS verdict.
@@ -139,23 +139,24 @@ The project progresses through 4 iterative synchronization points:
   - `ReviewLibrary` stores copied, reviewed snapshots in session memory. Reads return independent copies. Repeated identical saves are idempotent; conflicting records with the same ID are rejected. Pending packets and unexplained rejections are not saved.
   - Resolves the earlier JSONL/no-local-data conflict in favor of AGENTS.md: no clinical records are written to disk. Session reset/server restart loses history; durable multi-session audit storage is not implemented.
 - **Component 4 (Bilingual PDF Generator)**:
-  - ReportLab creates a 2-column bilingual layout with review badges, bold protected values, versions/timestamps, and page numbers. Long paragraphs split across pages with repeated language headers. Rejected PDFs are marked audit-only, not for patient use. Supplied text and metadata are escaped.
+  - ReportLab creates a full-width English handout by default, or a 2-column bilingual layout when Spanish is included, with review badges, bold protected values, versions/timestamps, and page numbers. Long paragraphs split across pages with repeated language headers. Rejected PDFs are marked audit-only, not for patient use. Supplied text and metadata are escaped.
 
 ### Track C: Clinician Review UI/UX Dashboard (Participant 3)
 - **Component 1 (Sidebar Controls)**:
   - Normal generation always uses the live simplification/translation pipeline; no Offline/Live selector is shown. Live failures do not substitute a mock packet. Local synthetic drift simulations remain available and cannot be approved.
-  - AI Model selectors for LLM1 Spanish and LLM2 judge/back-translation (supporting `gpt52`, `gpt4o`, `gpt56luna`, `kimik3`, `copus5`, `local1`, `local2`).
+  - AI Model selectors for LLM1 simplification/optional Spanish and LLM2 judge/back-translation (supporting `gpt52`, `gpt4o`, `gpt56luna`, `kimik3`, `copus5`, `local1`, `local2`).
   - Protocol and module-version choices come from loaded content and matching orders. Order-set selection shows the actual version and ID exposed by the loader (currently one order set per condition). History labels without archived content are not selectable.
-  - Data source indicator badge and cache refresh button (`🔄`).
-- **Component 2 (4-Way Comparative Review Pane)**:
-  - 4 columns: Original Clinical Text, Simplified English, Spanish Handout, Back-Translated English.
-  - Automated telemetry display on simplified English (FKGL score, verbatim lock badges, Safety Judge findings). Back-translated English is a fidelity comparison pane, without a separate FKGL score; deterministic safety checks also inspect its protected values.
+  - The In-Memory Data Stream panel is removed. Keep Refresh Protocols and actionable loading failures/data-quality notices. A load failure blocks generation.
+- **Component 2 (Source Preview & Comparative Review)**:
+  - Front page: compact title spacing, patient MRN and age, immediately updated module name, Generate Simplified Instructions with an unchecked Spanish checkbox to its right, then a full-width scrollable source box.
+  - After generation: two panes (original and editable simplified English), or four panes when Spanish is requested (adding Spanish and back-translated English). A width-percentage slider adjusts the original pane; remaining panes share the available width. New Generation returns to the source preview.
+  - Metrics replace the generation controls: FKGL rounded to one decimal, verbatim percentage rounded to a whole number, and judge verdict. Missing safety tokens appear in the verbatim help tooltip; correctly preserved tokens are not listed. Back-translated English is a fidelity comparison pane, without a separate FKGL score; deterministic safety checks also inspect its protected values.
 - **Component 3 (Inline Editing & Feedback Loop)**:
   - Clinician text area with two-way widget state binding.
-  - "Save and check edits" re-evaluates English and refreshes translations while keeping status `PENDING`. Failed live rechecks invalidate approval eligibility and clear outdated translations when local evaluation succeeds; they never manufacture mock Spanish.
-  - Successful checks are bound to an exact packet snapshot within the session. Any subsequent English edit requires another successful check.
+  - "Save and check edits" re-evaluates English and refreshes translations only if requested while keeping status `PENDING`. Failed live rechecks invalidate approval eligibility and clear outdated translations when local evaluation succeeds; they never manufacture mock Spanish.
+  - Successful checks are bound to an exact packet snapshot within the session. Any subsequent English edit requires another successful check. Changing module, source version, orders, model selections, or drift scenario clears the current review and returns to the source preview.
 - **Component 4 (Action Gates & Governance)**:
-  - "Approve & publish": Requires the exact checked revision, available evaluation, a passing safety judge with no unresolved findings, strict value preservation in all three output panes, and authorized Spanish-review attestation for that revision. The attestation is recorded in clinician notes; this prototype does not authenticate reviewer credentials.
+  - "Approve & publish": Requires the exact checked revision, available evaluation, a passing safety judge with no unresolved findings, strict value preservation in every requested output pane, and authorized Spanish-review attestation when Spanish is requested. English-only output must have empty Spanish/back-translation panes and records no Spanish attestation. For bilingual reviews the attestation is recorded in clinician notes; this prototype does not authenticate reviewer credentials.
   - Builds the PDF before saving the approved snapshot and updating UI status to `APPROVED` or `EDITED_AND_APPROVED`; export failure keeps the packet pending. A successful save unlocks PDF download.
   - "Reject & log drift": Persistent modal with Cancel and required category/reason. Rejects a copy of the current reviewed text, builds its audit PDF before saving, and preserves previous history on failure. Finalized packets require a new revision before a changed review.
   - Library viewer tab with "Physician Decision" and "PDF Annotation" columns.
@@ -175,6 +176,6 @@ The following specification documents are maintained in `specs/`:
 ## Phase 3 Verification Status
 
 Run from `main_sync`: `../.venv/bin/python -B tests/run_suite.py` (or the installed environment's Python).
-Verified on this iteration: **135 automated tests passed**, Python syntax checks passed, and `git diff --check` was clean. The suite uses synthetic fixtures and mocked external transports, blocks network requests/user-secret reads, and prohibits JSONL file access. It covers all three conditions and review outcomes, revision freshness, session isolation, drift injections, protected translation, and long PDF exports.
+Verified on this iteration: **140 automated tests passed**, Python syntax checks passed, and `git diff --check` was clean. The suite uses synthetic fixtures and mocked external transports, blocks network requests/user-secret reads, and prohibits JSONL file access. It covers all three conditions and review outcomes, revision freshness, session isolation, drift injections, protected translation, optional English-only generation/rechecking/publication, input freshness, and long English/bilingual PDF exports.
 
 No live GitHub/model acceptance, authorized clinical validation, or merge has been performed. Spanish sign-off is a recorded reviewer attestation; credential authentication remains outside this prototype. Warning preservation is assessed semantically by the safety judge and clinician; exact source-sentence matching is not required after simplification.

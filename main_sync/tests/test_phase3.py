@@ -163,7 +163,8 @@ class Phase3WorkflowTests(unittest.TestCase):
             with self.subTest(condition=condition), phase3_app():
                 at=self.app()
                 next(s for s in at.selectbox if s.label=='Clinical Module:').select(condition).run()
-                click(at,'Generate Instructions')
+                at.checkbox(key='chk_want_spanish').check().run()
+                click(at,'Generate Simplified Instructions')
                 self.assertEqual(len(at.exception),0)
                 at.checkbox[0].check().run()
                 click(at,'Approve & Publish')
@@ -183,7 +184,8 @@ class Phase3WorkflowTests(unittest.TestCase):
                 self.assertEqual(len(records),2)
                 self.assertEqual(records[0].model_dump(),original.model_dump())
                 self.assertEqual(records[1].parent_packet_id,original.packet_id)
-                click(at,'Generate Instructions')
+                click(at,'New Generation')
+                click(at,'Generate Simplified Instructions')
                 click(at,'Reject & Log Drift')
                 click(at,'Confirm Rejection')
                 self.assertEqual(len(at.session_state['review_library'].records()),2)
@@ -200,11 +202,10 @@ class Phase3WorkflowTests(unittest.TestCase):
             with self.subTest(mode=mode), phase3_app() as client:
                 at=self.app()
                 next(s for s in at.selectbox if 'Simulate Safety Failure' in s.label).select(mode).run()
-                click(at,'Generate Instructions')
+                click(at,'Generate Simplified Instructions')
                 self.assertEqual(len(at.exception),0)
                 self.assertTrue(at.session_state['current_packet'].is_simulation)
                 self.assertEqual(at.session_state['current_packet'].evaluation_metrics.safety_judge.overall_verdict,'FLAGGED_FOR_REVIEW')
-                at.checkbox[0].check().run()
                 click(at,'Approve & Publish')
                 self.assertEqual(at.session_state['current_packet'].status,'PENDING')
                 self.assertEqual(at.session_state['review_library'].records(),[])
@@ -213,7 +214,7 @@ class Phase3WorkflowTests(unittest.TestCase):
     def test_separate_app_sessions_do_not_share_reviews(self):
         with phase3_app():
             at=self.app()
-            click(at,'Generate Instructions'); at.checkbox[0].check().run(); click(at,'Approve & Publish')
+            click(at,'Generate Simplified Instructions'); click(at,'Approve & Publish')
             self.assertEqual(len(at.session_state['review_library'].records()),1)
             other=self.app()
             self.assertEqual(other.session_state['review_library'].records(),[])
@@ -249,7 +250,7 @@ class WorkflowFailureTests(unittest.TestCase):
         with phase3_app() as client:
             client.chat.completions.create.side_effect=RuntimeError('Synthetic outage')
             at=self.app()
-            click(at,'Generate Instructions')
+            click(at,'Generate Simplified Instructions')
             self.assertEqual(len(at.exception),0)
             self.assertIsNone(at.session_state['current_packet'])
             self.assertIsNone(at.session_state['pdf_bytes'])
@@ -262,7 +263,7 @@ class WorkflowFailureTests(unittest.TestCase):
             self.assertEqual(fetch.call_count,1)
             click(at,'Refresh')
             self.assertEqual(fetch.call_count,2)
-            click(at,'Generate Instructions')
+            click(at,'Generate Simplified Instructions')
             click(at,'Reject & Log Drift')
             click(at,'Cancel')
             self.assertIsNone(at.session_state['reject_dialog_packet_id'])
@@ -270,7 +271,7 @@ class WorkflowFailureTests(unittest.TestCase):
 
     def test_rejection_export_failure_preserves_pending_packet(self):
         with phase3_app(), patch('exporters.pdf_generator.create_bilingual_pdf',side_effect=RuntimeError('Synthetic export failure')):
-            at=self.app(); click(at,'Generate Instructions'); click(at,'Reject & Log Drift')
+            at=self.app(); click(at,'Generate Simplified Instructions'); click(at,'Reject & Log Drift')
             next(t for t in at.text_area if 'Clinical Rationale' in t.label).input('Synthetic finding').run()
             click(at,'Confirm Rejection')
             self.assertEqual(len(at.exception),0)

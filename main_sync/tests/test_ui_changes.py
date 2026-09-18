@@ -1,0 +1,77 @@
+"""Acceptance coverage for uichanges.md and optional Spanish review."""
+import unittest
+from unittest.mock import patch
+from tests.test_phase3 import phase3_app, click
+from tests import test_phase3
+from tests.test_simplification import orders
+from pipeline.orchestrator import PipelineOrchestrator
+from schemas.instruction_packet import InstructionPacket, SafetyJudgeResult
+
+
+class OptionalTranslationTests(unittest.TestCase):
+    def test_english_generation_and_recheck_never_call_translation(self):
+        with patch('pipeline.orchestrator.get_client', return_value=(object(), 'test')), patch('pipeline.live_llm.simplify_to_plain_language', return_value='Plain English.'), patch('pipeline.evaluator.textstat.flesch_kincaid_grade', return_value=5.8), patch('pipeline.live_llm.translate_to_spanish') as forward, patch('pipeline.live_llm.back_translate_to_english') as back, patch('pipeline.live_llm.judge_safety', return_value=SafetyJudgeResult(overall_verdict='PASS')) as judge:
+            service = PipelineOrchestrator()
+            original = service.generate_live('Source.', orders(), condition='test', module_version='v1', translate=False)
+            revised = service.recheck_edits_live(original, 'Edited English.', translate=False)
+        forward.assert_not_called(); back.assert_not_called()
+        self.assertEqual(judge.call_count, 2)
+        self.assertEqual(revised.parent_packet_id, original.packet_id)
+        self.assertEqual(revised.translated_es, '')
+        self.assertEqual(revised.evaluation_metrics.safety_judge.overall_verdict, 'PASS')
+
+    def test_english_pdf_has_no_spanish_column_or_bilingual_claim(self):
+        from exporters import pdf_generator
+        from reportlab.platypus import Paragraph
+        texts = []
+        def capture(text, *args, **kwargs):
+            texts.append(text)
+            return Paragraph(text, *args, **kwargs)
+        p = InstructionPacket(packet_id='SYN-EN', condition='test', clinical_orders=orders(), simplified_en='English instructions. ' * 1000, status='APPROVED')
+        with patch.object(pdf_generator, 'Paragraph', side_effect=capture):
+            pdf = pdf_generator.create_bilingual_pdf(p)
+        self.assertTrue(pdf.startswith(b'%PDF'))
+        combined = ' '.join(texts)
+        self.assertNotIn('Bilingual', combined)
+        self.assertNotIn('ESPAÑOL', combined)
+        self.assertNotIn('Packet ID', combined)
+        self.assertIn('English Handout', combined)
+
+
+class UiChangesTests(unittest.TestCase):
+    def app(self):
+        return test_phase3.Phase3WorkflowTests().app()
+
+    def test_english_only_publish_has_no_false_spanish_attestation(self):
+        with phase3_app():
+            at = self.app()
+            self.assertFalse(at.checkbox(key='chk_want_spanish').value)
+            self.assertTrue(any('clinical-box-full' in m.value and 'CLINICAL ORDERS' in m.value for m in at.markdown))
+            click(at, 'Generate Simplified Instructions')
+            self.assertFalse(at.exception)
+            self.assertFalse(at.session_state['current_packet'].translated_es)
+            self.assertEqual([m.value for m in at.metric][:2], ['5.8', '100%'])
+            self.assertFalse(any('Spanish Handout (LLM' in m.value for m in at.markdown))
+            at.slider[0].set_value(60).run()
+            click(at, 'Approve & Publish')
+            self.assertEqual(at.session_state['current_packet'].status, 'APPROVED')
+            self.assertNotIn('attested to authorized Spanish', at.session_state['current_packet'].clinician_notes or '')
+
+    def test_order_change_discards_stale_review(self):
+        with phase3_app():
+            at = self.app(); click(at, 'Generate Simplified Instructions')
+            next(t for t in at.text_input if t.label == 'Patient Age:').input('10 years old').run()
+            self.assertIsNone(at.session_state['current_packet'])
+            self.assertIsNone(at.session_state['checked_packet'])
+            self.assertTrue(any('10 years old' in m.value for m in at.markdown))
+
+    def test_spanish_opt_in_renders_four_panes_and_requires_attestation(self):
+        with phase3_app():
+            at = self.app(); at.checkbox(key='chk_want_spanish').check().run()
+            click(at, 'Generate Simplified Instructions')
+            self.assertFalse(at.exception)
+            self.assertTrue(any('Back-Translated English (LLM' in m.value for m in at.markdown))
+            click(at, 'Approve & Publish')
+            self.assertEqual(at.session_state['current_packet'].status, 'PENDING')
+            at.checkbox[0].check().run(); click(at, 'Approve & Publish')
+            self.assertEqual(at.session_state['current_packet'].status, 'APPROVED')

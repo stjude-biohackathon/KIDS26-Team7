@@ -72,6 +72,6 @@ class SimplificationTests(unittest.TestCase):
             self.assertFalse(app.exception)
             for widget in list(app.radio) + list(app.selectbox):
                 self.assertFalse(any('offline' in str(option).lower() for option in widget.options))
-            next(button for button in app.button if 'Generate Instructions' in button.label).click().run()
+            next(button for button in app.button if 'Generate Simplified Instructions' in button.label).click().run()
             live.assert_called_once()
             self.assertTrue(any('Generation failed' in error.value for error in app.error))

@@ -50,7 +50,8 @@ Participant 1 owns the multi-LLM generation, translation, and safety verificatio
     ```
   - **Resilience Rule**: If the Safety Judge API fails or times out, catch the exception and mark `overall_verdict="FLAGGED_FOR_REVIEW"` without halting the clinician workflow.
 
-### 2.4 Bilingual Dual Translation
+### 2.4 Optional Bilingual Dual Translation
+- The UI defaults to English-only and passes `translate=False` to `generate_live` and `recheck_edits_live`; skip both translation calls and leave both fields empty. LLM2 still judges English, and all English readability/value gates apply. The API retains `translate=True` as its compatibility default; UI callers always pass the explicit family preference.
 - **Forward Translation (LLM1)**: Translates `simplified_en` into accessible Latin American Spanish (`translated_es`).
 - **Back-Translation (LLM2)**: Translates `translated_es` back into English (`back_translated_en`).
 - **Clinical Value**: Clinicians who do not speak Spanish can inspect the back-translation side-by-side to verify semantic fidelity.
@@ -75,7 +76,7 @@ No matching value/warning means the requested injection fails explicitly. Packet
 ### 2.7 Protection and Final Safety Vetoes
 - Simplification/translation/back-translation inputs mask numeric values and associated units before model calls. Restoration requires the exact sentinel multiset and rejects invented numbers.
 - Judge inputs are masked too; complete typed audit fields are required. Invalid, incomplete, or unavailable audits yield `FLAGGED_FOR_REVIEW`.
-- Required values must survive in English, Spanish, and back-translation. Additional unsupplied doses/thresholds/phone numbers and out-of-range FKGL block approval even if the judge says PASS. Warnings may be rephrased; the judge checks their meaning and reported omissions or contradictions block approval regardless of verdict.
+- Required values must survive in English and, when requested, Spanish and back-translation. Additional unsupplied doses/thresholds/phone numbers and out-of-range FKGL block approval even if the judge says PASS. Warnings may be rephrased; the judge checks their meaning and reported omissions or contradictions block approval regardless of verdict.
 - These conservative checks do not certify clinical meaning. Authorized Spanish review remains a separate per-revision human attestation.
 
 ---

@@ -20,3 +20,17 @@ Show the FKGL readability score, verbatim score and judge review in place of whe
 remove the locked safety tokens that are correct and
 Show the missing safety tokens when you hover over the verbatim score. 
 If the spanish is checked, do the same views but instead of 2 boxes make 4 boxes side by side: original, simplified, simplified in spanish, span simplified back translated to eng.
+
+
+## Implementation status
+
+All requested items above are implemented in `app/clinician_ui.py` and connected review/export paths:
+
+- Patient MRN/age, immediate module selection, reduced title padding, main-page generation controls, and full-width scrollable original preview.
+- English-only by default; the family checkbox opts into Spanish and English back-translation. Translation calls are skipped for English-only generation and rechecking.
+- Two or four review panes with a width-percentage slider; metrics replace generation controls. FKGL uses one decimal, verbatim uses whole percentages, and missing tokens appear in its help tooltip.
+- Removed the data-stream panel, correct-token lists, user-facing "packet" terminology, diagnosis labels, and decorative emojis. The internal `InstructionPacket` contract is retained.
+- English-only approval/export works without a Spanish attestation or empty Spanish PDF column. Spanish review still requires fresh authorized attestation. Input changes clear stale reviews; New Generation returns to the preview.
+- Refresh Protocols, actionable data-loading failures, safety checks, revision checks, and session-only history remain available.
+
+Verified with 140 automated tests using synthetic fixtures and mocked external services. Live-service and authorized clinical acceptance remain pending. See `plan.md` and `specs/03_TRACK_C_CLINICIAN_UI_UX.md` for the updated workflow contract.

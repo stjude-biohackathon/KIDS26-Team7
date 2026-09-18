@@ -1,6 +1,6 @@
 """
-Track B: Bilingual PDF Generator.
-ReportLab generator creating clean 2-column bilingual layout with physician verification status banner and audit footer.
+Track B: English and bilingual PDF generator.
+ReportLab generator creating a full-width English or 2-column bilingual layout with physician verification status banner and audit footer.
 Adheres strictly to specs/02_TRACK_B_DATA_AND_STORAGE.md.
 """
 
@@ -43,7 +43,7 @@ def _format_for_reportlab(text: str, protected_values=()) -> str:
 
 def create_bilingual_pdf(packet: InstructionPacket) -> bytes:
     """
-    Renders a high-quality 2-column bilingual pediatric discharge handout
+    Renders a full-width English or 2-column bilingual pediatric discharge handout
     with physician verification banner, verbatim markers, and audit sign-off footer.
     """
     buf = io.BytesIO()
@@ -95,6 +95,8 @@ def create_bilingual_pdf(packet: InstructionPacket) -> bytes:
     )
 
     elements = []
+    bilingual = bool(packet.translated_es.strip())
+    handout_label = "Bilingual Handout" if bilingual else "English Handout"
 
     # Hospital Title Header
     elements.append(
@@ -110,12 +112,12 @@ def create_bilingual_pdf(packet: InstructionPacket) -> bytes:
         bg_col = colors.HexColor("#F0FFF4")
         border_col = colors.HexColor("#38A169")
         txt_col = colors.HexColor("#22543D")
-        banner_msg = f" {annotation.upper()} — Reviewed Bilingual Handout"
+        banner_msg = f" {annotation.upper()} — Reviewed {handout_label}"
     elif status == "EDITED_AND_APPROVED":
         bg_col = colors.HexColor("#EBF8FF")
         border_col = colors.HexColor("#3182CE")
         txt_col = colors.HexColor("#2A4365")
-        banner_msg = f" {annotation.upper()} — Reviewed Bilingual Handout"
+        banner_msg = f" {annotation.upper()} — Reviewed {handout_label}"
     elif status == "REJECTED_DRIFT":
         bg_col = colors.HexColor("#FFF5F5")
         border_col = colors.HexColor("#E53E3E")
@@ -126,7 +128,7 @@ def create_bilingual_pdf(packet: InstructionPacket) -> bytes:
         bg_col = colors.HexColor("#FFFAF0")
         border_col = colors.HexColor("#DD6B20")
         txt_col = colors.HexColor("#7B341E")
-        banner_msg = f"⏳ {annotation.upper()}"
+        banner_msg = f"{annotation.upper()}"
 
     banner_p = Paragraph(f"<font color='{txt_col.hexval()}'>{_format_for_reportlab(banner_msg)}</font>", banner_style)
     banner_table = Table([[banner_p]], colWidths=[doc.width - 12], splitInRow=1)
@@ -145,9 +147,9 @@ def create_bilingual_pdf(packet: InstructionPacket) -> bytes:
 
     # Patient Metadata Summary
     patient_info = (
-        f"<b>Patient ID:</b> {escape(packet.clinical_orders.patient_id)} &nbsp;|&nbsp; "
+        f"<b>Patient MRN:</b> {escape(packet.clinical_orders.patient_id)} &nbsp;|&nbsp; "
         f"<b>Age:</b> {escape(packet.clinical_orders.age or 'N/A')} &nbsp;|&nbsp; "
-        f"<b>Diagnosis:</b> {escape(packet.clinical_orders.diagnosis)}"
+        f"<b>Module:</b> {escape(packet.clinical_orders.diagnosis)}"
     )
     elements.append(Paragraph(patient_info, meta_style))
     elements.append(Spacer(1, 8))
@@ -162,11 +164,13 @@ def create_bilingual_pdf(packet: InstructionPacket) -> bytes:
 
     # The frame adds 6pt padding on each side of doc.width. Split within
     # long cells so a single paragraph can span pages without truncation.
+    header = [Paragraph("<b>ENGLISH</b>", cell_style)]
+    body = [col_en]
+    if bilingual:
+        header.append(Paragraph("<b>ESPAÑOL (Instrucciones para la Familia)</b>", cell_style))
+        body.append(col_es)
     content_table = Table(
-        [[Paragraph("<b>ENGLISH</b>", cell_style),
-          Paragraph("<b>ESPAÑOL (Instrucciones para la Familia)</b>", cell_style)],
-         [col_en, col_es]],
-        colWidths=[(doc.width - 12) / 2] * 2,
+        [header, body], colWidths=[(doc.width - 12) / len(header)] * len(header),
         repeatRows=1, splitByRow=1, splitInRow=1,
     )
     content_table.setStyle(
@@ -174,7 +178,7 @@ def create_bilingual_pdf(packet: InstructionPacket) -> bytes:
             ("VALIGN", (0, 0), (-1, -1), "TOP"),
             ("LEFTPADDING", (0, 0), (-1, -1), 6),
             ("RIGHTPADDING", (0, 0), (-1, -1), 6),
-            ("LINEBEFORE", (1, 0), (1, -1), 1, colors.HexColor("#CBD5E0")),
+            *([("LINEBEFORE", (1, 0), (1, -1), 1, colors.HexColor("#CBD5E0"))] if bilingual else []),
         ])
     )
     elements.append(content_table)
@@ -185,7 +189,7 @@ def create_bilingual_pdf(packet: InstructionPacket) -> bytes:
     clean_ts = timestamp[:19].replace("T", " ")
     footer_text = (
         f"Protocol: {escape(packet.condition)} | Module: {escape(packet.module_version)} | Order Set: {escape(packet.order_version)} | "
-        f"Packet ID: {escape(packet.packet_id)}<br/>"
+        f"Record ID: {escape(packet.packet_id)}<br/>"
         f"Physician Verification: {annotation} | Recorded: {clean_ts} UTC | Signature: __________________________"
     )
     elements.append(Paragraph(footer_text, footer_style))

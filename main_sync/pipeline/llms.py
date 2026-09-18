@@ -223,7 +223,7 @@ def describe_model_error(alias: str, exc: Exception) -> str:
     if isinstance(exc, ProtectionError):
         return f"{alias}: protected clinical values were not preserved; translation was rejected."
     if isinstance(exc, ValueError):
-        return f"{alias}: input or model-output validation failed; no checked packet was produced."
+        return f"{alias}: input or model-output validation failed; no checked instructions were produced."
     status = getattr(exc, "status_code", None)
     if status in (401, 403):
         return (

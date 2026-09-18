@@ -11,7 +11,7 @@ Participant 2 owns the data lifecycle, security compliance, persistence, and pri
 1. **Canonical Schema Contract (`schemas/instruction_packet.py`)**: Defines shared data interfaces across all tracks.
 2. **In-Memory GitHub App Loader (`storage/github_loader.py`)**: Fetches clinical modules and orders on the fly from a private GitHub repo (`stjude-biohackathon/team7-data`) via GitHub App authentication with zero local copies on disk.
 3. **Versioned Library Persistence (`storage/gold_library.py`)**: Stores independent finalized review snapshots in session memory only.
-4. **Bilingual PDF Generator (`exporters/pdf_generator.py`)**: Renders high-quality 2-column bilingual clinical discharge handouts with physician verification badges and protocol version tracking.
+4. **Bilingual PDF Generator (`exporters/pdf_generator.py`)**: Renders full-width English or requested 2-column bilingual clinical discharge handouts with physician verification badges and protocol version tracking.
 
 ---
 
@@ -67,7 +67,9 @@ Participant 2 owns the data lifecycle, security compliance, persistence, and pri
     - Edited & Approved: Light blue background (`#EBF8FF`), blue border (`#3182CE`), text: "Edited and approved by physician".
     - Rejected PDFs include an audit-only/not-for-patient-use label on every page.
     - Rejected: Light red background (`#FFF5F5`), red border (`#E53E3E`), text: "Rejected by physician" with rejection notice.
-  - **2-Column Side-by-Side Grid**:
+  - **Language-Aware Layout**:
+    - English-only output uses one full-width column and an English Handout banner, with no blank Spanish column.
+    - Requested bilingual output uses two side-by-side columns. User-facing metadata says Patient MRN, Module, and Record ID.
   - Long cells split across pages with repeated language headers; table widths fit the available page frame.
     - Left column: English simplified instructions with bolded verbatim markers.
     - Right column: Spanish translation.
