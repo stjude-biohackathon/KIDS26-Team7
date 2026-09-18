@@ -688,7 +688,9 @@ else:
             label="FKGL Readability",
             value=f"{round(metrics.fkgl_score, 1):.1f}",
             delta="Target: 5.0–6.9" if 5.0 <= metrics.fkgl_score <= 6.9 else "Out of Range",
-            delta_color="normal" if 5.0 <= metrics.fkgl_score <= 6.9 else "inverse",
+            # Readability misses are cautionary, so they must not read as a red
+            # safety failure alongside the verbatim and judge metrics.
+            delta_color="normal" if 5.0 <= metrics.fkgl_score <= 6.9 else "off",
             help="Flesch-Kincaid Grade Level calculated via textstat. Pediatric discharge goal is 5th–6th grade.",
         )
     with m_col2:
@@ -745,7 +747,8 @@ else:
         st.caption("Only intact markers were restored. Missing values were not inserted; unresolved markers require clinician correction. Requested translation, back-translation, and judging still run so every available draft can be reviewed.")
 
     if not 5.0 <= metrics.fkgl_score <= 6.9:
-        st.error(
+        # Readability is a quality gate, not a safety failure: yellow, not red.
+        st.warning(
             "DRAFT — NOT FOR PATIENT USE. The readability score did not meet "
             "the FKGL target of 5.0–6.9. The draft remains visible for review, "
             "but approval is blocked."
@@ -761,7 +764,7 @@ else:
         )
 
     if metrics.safety_judge and metrics.safety_judge.factual_drift_detected:
-        st.warning("Safety Alert: " + metrics.safety_judge.explanation)
+        st.error("Safety Alert: " + metrics.safety_judge.explanation)
 
     # Re-evaluation notice banner if edits were recently checked
     if st.session_state.get("edits_checked_banner", False):

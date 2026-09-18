@@ -148,7 +148,10 @@ class UiChangesTests(unittest.TestCase):
                 packet.simplified_en,
             )
             notices = [item.value for item in at.error]
-            self.assertTrue(any('readability' in item.lower() for item in notices))
+            cautions = [item.value for item in at.warning]
+            # Readability misses are yellow; safety failures stay red.
+            self.assertTrue(any('readability' in item.lower() for item in cautions))
+            self.assertFalse(any('readability' in item.lower() for item in notices))
             self.assertTrue(any('safety review' in item.lower() for item in notices))
             judge_metric = next(item for item in at.metric if item.label == 'Judge Review')
             self.assertEqual(judge_metric.delta, 'Invalid Schema')
