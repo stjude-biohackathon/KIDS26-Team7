@@ -33,19 +33,24 @@ _VALUES = re.compile('|'.join('(?:' + p + ')' for p in (
 _SENTINEL = re.compile(r'\[\[CLEAR_[a-f0-9]+_\d+\]\]')
 
 
-def _is_age_context(text: str, match: re.Match) -> bool:
-    """Exclude ages even when their unit resembles a clinical duration."""
-    before = text[max(0, match.start() - 24):match.start()]
+def _is_demographic_context(text: str, match: re.Match) -> bool:
+    """Exclude patient age and weight from instruction-level safety locks."""
+    before = text[max(0, match.start() - 40):match.start()]
     after = text[match.end():match.end() + 12]
     return bool(
         re.search(r"\bage\s*:?\s*$", before, re.IGNORECASE)
         or re.match(r"\s*(?:old|of age)\b", after, re.IGNORECASE)
+        or re.search(
+            r"\b(?:patient\s+)?(?:weight|weighs|weighed)\s*(?::|is|was)?\s*$",
+            before,
+            re.IGNORECASE,
+        )
     )
 
 
 def _protected_matches(text: str):
     return (match for match in _VALUES.finditer(text)
-            if not _is_age_context(text, match))
+            if not _is_demographic_context(text, match))
 
 
 class ProtectionError(ValueError):
@@ -86,7 +91,7 @@ class ProtectedText:
         reverse = {}
         namespace = uuid4().hex
         def mask(match):
-            if _is_age_context(text, match):
+            if _is_demographic_context(text, match):
                 return match.group()
             value = match.group()
             if value not in reverse:

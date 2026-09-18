@@ -26,7 +26,7 @@ def synthetic_orders(**changes):
 
 
 class MockPipelineTests(unittest.TestCase):
-    def test_composer_includes_complete_team7_order_content(self):
+    def test_composer_includes_actions_but_omits_patient_weight(self):
         orders = synthetic_orders(
             weight_kg=28.5,
             hydration_order="Encourage 1,800 mL of fluids daily.",
@@ -37,13 +37,13 @@ class MockPipelineTests(unittest.TestCase):
         composed = compose_clinical_text("Clinician-vetted module sentence.", orders)
 
         for expected in (
-            "Weight: 28.5 kg",
             "Hydration: Encourage 1,800 mL of fluids daily.",
             "Red flag: Sudden chest pain",
             "Red flag: Trouble breathing",
             "Contraindication: Do not use cold packs.",
         ):
             self.assertIn(expected, composed)
+        self.assertNotIn("Weight: 28.5 kg", composed)
 
     def test_packet_keeps_team7_source_separate_from_physician_overrides(self):
         source_orders = synthetic_orders(

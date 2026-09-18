@@ -669,55 +669,56 @@ MODULE_DISPLAY_NAMES = {
 }
 
 
-def _run_generation(want_spanish: bool) -> None:
+def _run_generation(want_spanish: bool, generation_status) -> None:
     """Run the pipeline for the current sidebar selections and store the result."""
-    with st.spinner("Generating and checking simplified instructions..."):
-        raw_template = live_templates[condition][module_version]
-        live_checked = False
-        live_failed = False
-        live_reason = ""
-        data_unavailable = False
-        try:
-            if not active_orders.patient_id.startswith("SYN-"):
-                raise ValueError("This prototype requires a synthetic patient ID beginning with SYN-.")
-            orchestrator = PipelineOrchestrator(llm1_model=selected_llm1, llm2_model=selected_llm2)
-            if drift_mode != "None":
-                # Scenario C never contacts models or alters upstream data.
-                baseline = orchestrator.generate(
-                    raw_template, active_orders, source_orders=base_order,
-                    module_version=module_version, condition=condition,
-                    simplified_template_text=compose_clinical_text(raw_template, active_orders),
-                )
-                packet = inject_drift(baseline, drift_mode)
-            else:
-                packet = orchestrator.generate_live(
-                    raw_template, active_orders, source_orders=base_order,
-                    module_version=module_version, condition=condition,
-                    translate=want_spanish,
-                )
-                live_checked = True
-        except Exception as exc:
-            st.session_state["current_packet"] = None
-            st.session_state["checked_packet"] = None
+    with generation_status.container():
+        with st.spinner("Generating and checking simplified instructions..."):
+            raw_template = live_templates[condition][module_version]
+            live_checked = False
+            live_failed = False
+            live_reason = ""
+            data_unavailable = False
+            try:
+                if not active_orders.patient_id.startswith("SYN-"):
+                    raise ValueError("This prototype requires a synthetic patient ID beginning with SYN-.")
+                orchestrator = PipelineOrchestrator(llm1_model=selected_llm1, llm2_model=selected_llm2)
+                if drift_mode != "None":
+                    # Scenario C never contacts models or alters upstream data.
+                    baseline = orchestrator.generate(
+                        raw_template, active_orders, source_orders=base_order,
+                        module_version=module_version, condition=condition,
+                        simplified_template_text=compose_clinical_text(raw_template, active_orders),
+                    )
+                    packet = inject_drift(baseline, drift_mode)
+                else:
+                    packet = orchestrator.generate_live(
+                        raw_template, active_orders, source_orders=base_order,
+                        module_version=module_version, condition=condition,
+                        translate=want_spanish,
+                    )
+                    live_checked = True
+            except Exception as exc:
+                st.session_state["current_packet"] = None
+                st.session_state["checked_packet"] = None
+                st.session_state["pdf_bytes"] = None
+                st.error("Generation failed. Nothing was published. " + describe_model_error(selected_llm1, exc))
+                st.stop()
+            st.session_state["reject_dialog_packet_id"] = None
+            st.session_state["edit_check_error"] = None
+            st.session_state["live_pipeline_notice"] = live_failed
+            st.session_state["live_pipeline_reason"] = live_reason
+            st.session_state["live_data_notice"] = data_unavailable
+            st.session_state["checked_packet"] = (
+                packet.model_dump(mode="json") if live_checked and not packet.evaluation_metrics.protection_failures else None
+            )
+            st.session_state["current_packet"] = packet
+            st.session_state["spanish_requested"] = want_spanish
+            st.session_state["clean_backup_packet"] = copy.deepcopy(packet)
+            st.session_state["edits_checked_banner"] = False
             st.session_state["pdf_bytes"] = None
-            st.error("Generation failed. Nothing was published. " + describe_model_error(selected_llm1, exc))
-            st.stop()
-        st.session_state["reject_dialog_packet_id"] = None
-        st.session_state["edit_check_error"] = None
-        st.session_state["live_pipeline_notice"] = live_failed
-        st.session_state["live_pipeline_reason"] = live_reason
-        st.session_state["live_data_notice"] = data_unavailable
-        st.session_state["checked_packet"] = (
-            packet.model_dump(mode="json") if live_checked and not packet.evaluation_metrics.protection_failures else None
-        )
-        st.session_state["current_packet"] = packet
-        st.session_state["spanish_requested"] = want_spanish
-        st.session_state["clean_backup_packet"] = copy.deepcopy(packet)
-        st.session_state["edits_checked_banner"] = False
-        st.session_state["pdf_bytes"] = None
-        # Initialize text area safely before widget is instantiated
-        st.session_state["txt_clinician_en"] = packet.simplified_en
-        st.rerun()
+            # Initialize text area safely before widget is instantiated
+            st.session_state["txt_clinician_en"] = packet.simplified_en
+            st.rerun()
 
 
 # ---------------------------------------------------------------------------
@@ -752,6 +753,11 @@ st.markdown(
     "</div>",
     unsafe_allow_html=True,
 )
+
+# This placeholder is created near the top of the main page. Generation is
+# triggered farther down after the source preview has rendered, but its status
+# is written here so clinicians do not have to scroll to see it.
+generation_status = st.empty()
 
 packet: Optional[InstructionPacket] = st.session_state.get("current_packet")
 
@@ -942,7 +948,7 @@ if packet is None:
     if generate_clicked:
         # Render the source first so it stays visible while the model and safety
         # checks run. The page switches to review only after a packet is ready.
-        _run_generation(want_spanish)
+        _run_generation(want_spanish, generation_status)
 else:
     if packet.is_simulation:
         st.error("SYNTHETIC DRIFT SIMULATION — not for patient use. Review and reject this test instruction set.")

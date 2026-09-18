@@ -76,21 +76,25 @@ class FailedDraftTests(unittest.TestCase):
         self.assertEqual(failed.back_translated_en, 'Give 10 mg instead.')
         self.assertTrue(failed.evaluation_metrics.protection_failures)
 
-    def test_age_and_incidental_numbers_are_not_protected(self):
+    def test_patient_demographics_and_incidental_numbers_are_not_protected(self):
         from pipeline.protection import ProtectedText, numeric_findings
         source = (
-            'Age 8 years. Infant age: 6 months. Step 1. Give 5 mg. Call 911 for a temperature of '
+            'Patient name: Jane Doe. MRN: SYN-PED-001. Age 8 years. '
+            'Infant age: 6 months. Weight: 28.5 kg. The patient weighs 62.8 lb. '
+            'Step 1. Give 5 mg. Call 911 for a temperature of '
             '100.4°F. Call again within 30 minutes.'
         )
         protected = ProtectedText(source)
         self.assertIn('Age 8 years', protected.masked)
         self.assertIn('age: 6 months', protected.masked)
+        self.assertIn('Weight: 28.5 kg', protected.masked)
+        self.assertIn('patient weighs 62.8 lb', protected.masked)
         self.assertIn('Step 1', protected.masked)
         for clinical_value in ('5 mg', '911', '100.4°F', '30 minutes'):
             self.assertNotIn(clinical_value, protected.masked)
         self.assertEqual(
             numeric_findings(
-                'Age 8 years. Infant age: 6 months. Give 5 mg.',
+                'Age 8 years. Infant age: 6 months. Weight: 28.5 kg. Give 5 mg.',
                 'Age 9 years. Infant age: 7 months. Give 5 mg.',
             ),
             [],

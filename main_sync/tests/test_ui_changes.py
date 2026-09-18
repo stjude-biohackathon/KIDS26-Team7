@@ -133,6 +133,11 @@ class UiChangesTests(unittest.TestCase):
         self.assertIn('[data-testid="stStatusWidget"]', source)
         self.assertNotIn('[data-testid="stSpinner"]', source)
         self.assertLess(
+            source.index('generation_status = st.empty()'),
+            source.index('if packet is None:'),
+        )
+        self.assertIn('_run_generation(want_spanish, generation_status)', source)
+        self.assertLess(
             source.index('_compose_original_preview_html(base_order'),
             source.index('if generate_clicked:'),
         )

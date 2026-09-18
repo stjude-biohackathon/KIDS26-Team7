@@ -54,10 +54,8 @@ def _chat(
 
 
 def format_orders(orders: ClinicalOrders) -> str:
-    """Render the complete effective order record supplied to generation."""
+    """Render clinical instructions, excluding patient demographics."""
     lines = [f"Diagnosis: {orders.diagnosis}"]
-    if orders.weight_kg is not None:
-        lines.append(f"Weight: {orders.weight_kg:g} kg")
     for med in orders.medications:
         lines.append(
             f"Medication: {med.name} | Dose: {med.dose} | Route: {med.route} | "

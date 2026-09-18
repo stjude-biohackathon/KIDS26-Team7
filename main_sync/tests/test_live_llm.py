@@ -91,10 +91,15 @@ class LiveLlmCallTests(unittest.TestCase):
         self.assertEqual(result, "Plain words.")
         client.chat.completions.create.assert_called_once()
 
-    def test_structured_model_context_omits_age(self):
-        rendered = live_llm.format_orders(synthetic_orders(age="8 years old"))
+    def test_structured_model_context_omits_patient_demographics(self):
+        rendered = live_llm.format_orders(
+            synthetic_orders(age="8 years old", weight_kg=28.5)
+        )
         self.assertNotIn("Age:", rendered)
         self.assertNotIn("8 years old", rendered)
+        self.assertNotIn("Weight:", rendered)
+        self.assertNotIn("28.5 kg", rendered)
+        self.assertNotIn("SYN-PED-001", rendered)
         self.assertIn("Dose: 5 mg", rendered)
 
     def test_simplification_converts_markdown_to_editor_plain_text(self):
