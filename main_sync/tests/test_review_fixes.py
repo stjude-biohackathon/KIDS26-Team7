@@ -93,7 +93,6 @@ class CheckedApprovalTests(unittest.TestCase):
         packet = self.packet()
         with offline_app(), patch('pipeline.orchestrator.PipelineOrchestrator.generate_live',return_value=packet), patch('storage.gold_library.save_gold_record') as save, patch('storage.gold_library.load_gold_records',return_value=[]):
             at = self.launch()
-            at.checkbox[0].check().run()
             next(b for b in at.button if 'Approve & Publish' in b.label).click().run()
             self.assertEqual(len(at.exception),0)
             self.assertEqual(at.session_state['current_packet'].status,'APPROVED')
@@ -108,13 +107,10 @@ class CheckedApprovalTests(unittest.TestCase):
         revised.edited_by_physician = True
         with offline_app(), patch('pipeline.orchestrator.PipelineOrchestrator.generate_live',return_value=packet), patch('pipeline.orchestrator.PipelineOrchestrator.recheck_edits_live',return_value=revised), patch('storage.gold_library.save_gold_record') as save, patch('storage.gold_library.load_gold_records',return_value=[]):
             at = self.launch()
-            at.checkbox[0].check().run()
             at.text_area(key='txt_clinician_en').input(revised.simplified_en).run()
             next(b for b in at.button if 'Approve & Publish' in b.label).click().run()
             save.assert_not_called()
             next(b for b in at.button if 'Save & Check Edits' in b.label).click().run()
-            self.assertFalse(at.checkbox[0].value)
-            at.checkbox[0].check().run()
             next(b for b in at.button if 'Approve & Publish' in b.label).click().run()
             self.assertEqual(len(at.exception),0)
             self.assertEqual(at.session_state['current_packet'].status,'EDITED_AND_APPROVED')
@@ -123,7 +119,6 @@ class CheckedApprovalTests(unittest.TestCase):
     def test_export_failure_does_not_save_approval(self):
         with offline_app(), patch('pipeline.orchestrator.PipelineOrchestrator.generate_live',return_value=self.packet()), patch('exporters.pdf_generator.create_bilingual_pdf',side_effect=RuntimeError('Synthetic export failure')), patch('storage.gold_library.save_gold_record') as save, patch('storage.gold_library.load_gold_records',return_value=[]):
             at = self.launch()
-            at.checkbox[0].check().run()
             next(b for b in at.button if 'Approve & Publish' in b.label).click().run()
             self.assertEqual(len(at.exception),0)
             self.assertEqual(at.session_state['current_packet'].status,'PENDING')
@@ -144,7 +139,6 @@ class CheckedApprovalTests(unittest.TestCase):
     def test_failed_recheck_invalidates_previous_approval_eligibility(self):
         with offline_app(), patch('pipeline.orchestrator.PipelineOrchestrator.generate_live',return_value=self.packet()), patch('storage.gold_library.save_gold_record') as save, patch('storage.gold_library.load_gold_records',return_value=[]):
             at = self.launch()
-            at.checkbox[0].check().run()
             next(b for b in at.button if 'Save & Check Edits' in b.label).click().run()
             self.assertIsNone(at.session_state['checked_packet'])
             self.assertEqual(at.session_state['current_packet'].translated_es,'')

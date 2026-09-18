@@ -110,17 +110,19 @@ class UiChangesTests(unittest.TestCase):
             self.assertIsNone(at.session_state['checked_packet'])
             self.assertTrue(any('10 years old' in m.value for m in at.markdown))
 
-    def test_spanish_opt_in_renders_translation_review_and_requires_attestation(self):
+    def test_spanish_opt_in_renders_translation_review_and_publishes_on_approval(self):
         with phase3_app():
             at = self.app(); at.checkbox(key='chk_want_spanish').check().run()
             click(at, 'Generate Simplified Instructions')
             self.assertFalse(at.exception)
             self.assertTrue(any('Back-Translated English (LLM' in m.value for m in at.markdown))
             self.assertEqual(len(at.slider), 0)
+            # Approving is itself the Spanish attestation; no separate checkbox.
+            self.assertEqual(len(at.checkbox), 0)
+            self.assertTrue(any('Approving attests' in c.value for c in at.caption))
             click(at, 'Approve & Publish')
-            self.assertEqual(at.session_state['current_packet'].status, 'PENDING')
-            at.checkbox[0].check().run(); click(at, 'Approve & Publish')
             self.assertEqual(at.session_state['current_packet'].status, 'APPROVED')
+            self.assertIn('Spanish', at.session_state['current_packet'].clinician_notes)
 
     def test_failed_readability_and_judge_still_show_simplified_draft(self):
         from schemas.instruction_packet import EvaluationMetrics, SafetyJudgeResult

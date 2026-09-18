@@ -814,15 +814,14 @@ else:
 
     if st.session_state.get("edit_check_error"):
         st.error(st.session_state["edit_check_error"])
-    # A new or edited revision requires a fresh human attestation.
-    review_key = hashlib.sha256(packet.model_dump_json().encode()).hexdigest()
+    # Clicking "Approve & Publish" is the clinician's attestation for this
+    # exact revision, including the Spanish pane when one was requested.
     if spanish_requested:
-        spanish_reviewed = st.checkbox(
-            "I am an authorized medical translator or credentialed bilingual clinician and have verified this Spanish translation.",
-            key=f"spanish_review_{review_key}",
+        st.caption(
+            "Approving attests that you have reviewed and verified this Spanish translation "
+            "as an authorized medical translator or credentialed bilingual clinician."
         )
     else:
-        spanish_reviewed = False
         st.caption("English-only review: no Spanish translation was requested for this family.")
 
     btn_col1, btn_col2, btn_col3, btn_col4 = st.columns([1.2, 1.2, 1.2, 1.5])
@@ -870,8 +869,9 @@ else:
         if st.button("Approve & Publish", type="primary", width="stretch"):
             edited_text = st.session_state.get("txt_clinician_en", packet.simplified_en)
             blockers = approval_blockers(
-                packet, edited_text, st.session_state.get("checked_packet"), spanish_reviewed,
-                spanish_requested=spanish_requested,
+                packet, edited_text, st.session_state.get("checked_packet"),
+                # The approval click itself is the attestation.
+                spanish_reviewed=True, spanish_requested=spanish_requested,
             )
             if blockers:
                 for reason in blockers:

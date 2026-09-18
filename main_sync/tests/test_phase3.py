@@ -170,7 +170,6 @@ class Phase3WorkflowTests(unittest.TestCase):
                 at.checkbox(key='chk_want_spanish').check().run()
                 click(at,'Generate Simplified Instructions')
                 self.assertEqual(len(at.exception),0)
-                at.checkbox[0].check().run()
                 click(at,'Approve & Publish')
                 self.assertEqual(at.session_state['current_packet'].status,'APPROVED')
                 original=at.session_state['review_library'].records()[0]
@@ -181,7 +180,6 @@ class Phase3WorkflowTests(unittest.TestCase):
                 click(at,'Save & Check Edits')
                 self.assertEqual(at.session_state['current_packet'].status,'PENDING')
                 self.assertIsNone(at.session_state['pdf_bytes'])
-                at.checkbox[0].check().run()
                 click(at,'Approve & Publish')
                 self.assertEqual(at.session_state['current_packet'].status,'EDITED_AND_APPROVED')
                 records=at.session_state['review_library'].records()
