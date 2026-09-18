@@ -77,7 +77,7 @@ class FailedDraftTests(unittest.TestCase):
         from pipeline.protection import ProtectedText, ProtectionError
         protected = ProtectedText('Give 5 mg. Repeat 5 mg. Call 911.')
         dose, phone = protected.values
-        for response, word in [(dose+' '+phone, 'Missing'), (protected.masked+' '+dose, 'Duplicated'), (protected.masked+' [[CLEAR_unknown_0]]', 'Unknown'), (protected.masked+' 10 mg', 'Unexpected')]:
+        for response, word in [(dose, 'Missing'), (protected.masked+' [[CLEAR_unknown_0]]', 'Unknown'), (protected.masked+' 10 mg', 'Unexpected')]:
             with self.subTest(word=word):
                 with self.assertRaises(ProtectionError) as raised:
                     protected.restore(response)
@@ -115,7 +115,24 @@ class FailedDraftTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             ReviewLibrary().save(failed)
 
-    def test_source_only_repeated_value_cannot_be_waived_by_recheck(self):
+    def test_source_values_need_at_least_one_occurrence_in_recheck(self):
         from pipeline.protection import numeric_findings
-        self.assertTrue(numeric_findings('Rest for 2 hours. Repeat after 2 hours.', 'Rest for 2 hours.'))
+        self.assertEqual(numeric_findings('Rest for 2 hours. Repeat after 2 hours.', 'Rest for 2 hours.'), [])
+        self.assertTrue(numeric_findings('Rest for 2 hours.', 'Rest.'))
         self.assertTrue(numeric_findings('Rest.', '[UNRESOLVED PROTECTED VALUE]'))
+
+    def test_known_markers_may_occur_once_or_multiple_times(self):
+        from pipeline.protection import ProtectedText
+        protected = ProtectedText('Give 5 mg. Repeat 5 mg. Call 911.')
+        dose, phone = protected.values
+        self.assertEqual(protected.restore(dose + ' ' + phone), '5 mg 911')
+        self.assertEqual(protected.restore(dose + ' ' + dose + ' ' + dose + ' ' + phone), '5 mg 5 mg 5 mg 911')
+
+    def test_repeated_source_value_can_pass_live_generation_and_recheck(self):
+        source = 'Give 5 mg. The dose is 5 mg.'
+        with provider(None), patch('pipeline.live_llm.simplify_to_plain_language', return_value='Give 5 mg.'):
+            packet = PipelineOrchestrator().generate_live(source, synthetic_orders(), condition='test', module_version='v1', translate=False)
+            revised = PipelineOrchestrator().recheck_edits_live(packet, 'Please give 5 mg.', translate=False)
+        for draft in (packet, revised):
+            self.assertEqual(draft.evaluation_metrics.protection_failures, [])
+            self.assertEqual(draft.evaluation_metrics.safety_judge.overall_verdict, 'PASS')

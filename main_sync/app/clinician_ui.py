@@ -657,21 +657,12 @@ else:
 
     # ------------------------------------------------------------------
     # Comparative panes: 2 boxes (English-only) or 4 boxes (with Spanish)
-    # with a slider to alter the screen-view percentage.
+    # Fixed equal widths: 50% each in English-only mode, 25% with Spanish.
     # ------------------------------------------------------------------
     if spanish_requested:
-        original_pct = st.slider(
-            "Original view width (%)", min_value=10, max_value=70, value=25,
-            help="Adjust how much of the screen the original pane occupies; the remaining panes split the rest evenly.",
-        )
-        rest = (100 - original_pct) / 3.0
-        col1, col2, col3, col4 = st.columns([original_pct, rest, rest, rest])
+        col1, col2, col3, col4 = st.columns(4)
     else:
-        original_pct = st.slider(
-            "Original view width (%)", min_value=10, max_value=90, value=50,
-            help="Adjust how much of the screen the original pane occupies versus the simplified English pane.",
-        )
-        col1, col2 = st.columns([original_pct, 100 - original_pct])
+        col1, col2 = st.columns(2)
         col3 = col4 = None
 
     with col1:

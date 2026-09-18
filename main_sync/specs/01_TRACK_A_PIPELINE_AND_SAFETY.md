@@ -8,7 +8,7 @@
 
 ## 1. Responsibilities & Objectives
 Participant 1 owns the multi-LLM generation, translation, and safety verification engine:
-1. **Vetted English Composition**: Binds supplied versioned wording and structured orders. LLM1 then simplifies English while preserving clinical facts and protected values.
+1. **Vetted English Composition**: Binds supplied versioned wording and structured orders. LLM1 only simplifies existing instructions in their original order, replacing difficult words and splitting long sentences while keeping already-simple text. No rewriting into new instructions, summarizing, reorganizing, added advice, omitted actions, changed exceptions, or weakened urgency is allowed.
 2. **Automated Quality Gate**: Measures FKGL readability via `textstat` and validates verbatim preservation of critical numbers using regex.
 3. **LLM2 Safety Judge**: Performs zero-shot safety audit checking for factual drift, omitted red flags, and dangerous contradictions.
 4. **Dual Translation**: Forward translation to Spanish (LLM1) and back-translation to English (LLM2) to expose translation drift.
@@ -74,13 +74,13 @@ Provides 4 selectable synthetic error injections, operating on independent revis
 No matching value/warning means the requested injection fails explicitly. Packets are marked `is_simulation`, retain parent revision identity, and cannot be approved. Tests inspect content changes, not merely the scenario label.
 
 ### 2.7 Protection and Final Safety Vetoes
-- A protection failure with a model response returns a `PENDING` review-only draft instead of discarding it. `EvaluationMetrics.protection_failures` lists missing/duplicated values with occurrence counts, unexpected numbers, and unknown/altered markers, labeled by pipeline stage.
+- A protection failure with a model response returns a `PENDING` review-only draft instead of discarding it. `EvaluationMetrics.protection_failures` lists missing values (required at least once), unexpected numbers, and unknown/altered markers, labeled by pipeline stage.
 - Restore exact known markers for display only; never insert missing values or guess corrupted markers. Unrecoverable markers display `[UNRESOLVED PROTECTED VALUE]`. Failures stay in session memory and never appear in exception text or logs.
 - Stop at the failed stage and retain all available panes; downstream translation/back-translation and model judging are skipped. The review verdict is deterministically `FLAGGED_FOR_REVIEW`, not a claimed completed model audit.
-- Fresh English rechecks compare numeric values and occurrence counts against composed source/orders, including source-only values and unresolved placeholders. A repaired draft creates a new revision; successful checks clear failures only on that revision. Approval, approved PDF export, and approved library saving reject unresolved protection failures.
+- Fresh English rechecks require each distinct numeric value at least once from composed source/orders, including source-only values. Unresolved placeholders block approval. A repaired draft creates a new revision; successful checks clear failures only on that revision. Approval, approved PDF export, and approved library saving reject unresolved protection failures.
 - Configuration/transport failures without a usable response still fail explicitly. FKGL-only retries retain the existing three-attempt limit; this draft-recovery behavior applies to protected-value failures.
 
-- Simplification/translation/back-translation inputs mask numeric values and associated units before model calls. Restoration requires the exact sentinel multiset and rejects invented numbers.
+- Simplification/translation/back-translation inputs mask numeric values and associated units before model calls. Restoration requires each distinct source sentinel at least once, with exact value restoration, and rejects invented numbers. Repetition counts need not match. This presence check never authorizes adding, changing, or omitting instructions; the judge still audits each instruction and its value associations.
 - Judge inputs are masked too; complete typed audit fields are required. Invalid, incomplete, or unavailable audits yield `FLAGGED_FOR_REVIEW`.
 - Required values must survive in English and, when requested, Spanish and back-translation. Additional unsupplied doses/thresholds/phone numbers and out-of-range FKGL block approval even if the judge says PASS. Warnings may be rephrased; the judge checks their meaning and reported omissions or contradictions block approval regardless of verdict.
 - These conservative checks do not certify clinical meaning. Authorized Spanish review remains a separate per-revision human attestation.

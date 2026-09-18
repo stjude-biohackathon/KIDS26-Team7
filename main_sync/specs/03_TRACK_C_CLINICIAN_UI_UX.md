@@ -44,7 +44,7 @@ Participant 3 owns the clinician-facing interface and review workflow:
 ### 2.2 Source Preview and Comparative Review
 The front page has reduced top padding and the title "Bilingual Pediatric Discharge Instruction Review", then patient MRN with age, and the selected module name. The module updates immediately from the sidebar. Generate Simplified Instructions and an unchecked Spanish translation checkbox appear together, followed by a full-width scrollable original-instructions box.
 
-Generation replaces those controls with FKGL (one decimal), verbatim percentage (whole number), and judge verdict. Verbatim help lists only missing safety tokens; correctly preserved tokens are not listed. New Generation returns to the preview. A width-percentage slider adjusts the original pane and divides remaining width among the other panes. Default review has two panes; Spanish opt-in has four:
+Generation replaces those controls with FKGL (one decimal), verbatim percentage (whole number), and judge verdict. Verbatim help lists only missing safety tokens; correctly preserved tokens are not listed. New Generation returns to the preview. No viewport slider is shown. The English-only panes are fixed at equal 50% widths; the four Spanish-review panes are fixed at equal 25% widths. Default review has two panes; Spanish opt-in has four:
 
 1. **Original Clinical Orders & Instructions (Col 1)**:
    - Displays raw, unsimplified clinical-grade instruction modules combined with personalized physician orders.

@@ -29,15 +29,13 @@ UNRESOLVED_VALUE = "[UNRESOLVED PROTECTED VALUE]"
 
 
 def numeric_findings(source: str, candidate: str) -> list[str]:
-    """Compare actual value occurrences for fresh checks of clinician edits."""
+    """Require every distinct source value at least once, with no new values."""
     expected = Counter(m.group() for m in _VALUES.finditer(source))
     actual = Counter(m.group() for m in _VALUES.finditer(candidate))
     findings = []
-    for value, count in expected.items():
-        if actual[value] < count:
-            findings.append(f"Missing protected value: {value} (expected {count} occurrence(s), found {actual[value]}).")
-        elif actual[value] > count:
-            findings.append(f"Duplicated protected value: {value} (expected {count} occurrence(s), found {actual[value]}).")
+    for value in expected:
+        if actual[value] == 0:
+            findings.append(f"Missing protected value: {value} (required at least once, found 0).")
     for value in (v for v in actual if v not in expected):
         findings.append(f"Unexpected numeric value: {value}.")
     if UNRESOLVED_VALUE in candidate or '[[CLEAR_' in candidate.upper():
@@ -65,10 +63,9 @@ class ProtectedText:
     def restore(self, response: str, *, require_all: bool = True) -> str:
         tokens = Counter(_SENTINEL.findall(response))
         findings = []
-        for token, count in self.counts.items():
-            if require_all and tokens[token] != count:
-                kind = "Missing" if tokens[token] < count else "Duplicated"
-                findings.append(f"{kind} protected value: {self.values[token]} (expected {count} occurrence(s), found {tokens[token]}).")
+        for token in self.values:
+            if require_all and tokens[token] == 0:
+                findings.append(f"Missing protected value: {self.values[token]} (required at least once, found 0).")
         if set(tokens) - self.values.keys():
             findings.append("Unknown protection marker returned by the model; its value cannot be recovered.")
         remainder = _SENTINEL.sub('', response)

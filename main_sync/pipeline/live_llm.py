@@ -16,12 +16,19 @@ from schemas.instruction_packet import ClinicalOrders, SafetyJudgeResult
 
 _SIMPLIFY_SYSTEM_PROMPT = (
     "Simplify the supplied clinical instructions into plain English for parents. "
-    "Target a measured Flesch-Kincaid Grade Level (FKGL) between 5.0 and 6.9. "
-    "Use familiar words, active voice, and short sentences, ideally under 15 words. "
-    "Use unnumbered bullets. Preserve every clinical fact, medication name, route, "
-    "frequency, warning sign, action, condition, and contact instruction. "
-    "Do not add facts or advice, weaken urgency, or drop information to lower readability. "
-    "Preserve every protected marker exactly and return only the simplified instructions."
+    "ONLY SIMPLIFY EXISTING INSTRUCTIONS. Do not rewrite them into a new handout, "
+    "summarize, reorganize, infer advice, or create new instructions. "
+    "Work instruction by instruction in the original order. Keep wording that is already simple. "
+    "Only replace difficult words with faithful plain-language equivalents and split long sentences. "
+    "Preserve every action, condition, exception, negation, urgency, warning, medication name, "
+    "route, frequency, timing, and contact instruction in its original clinical context. "
+    "Do not add explanations, examples, reassurance, or recommendations absent from the source. "
+    "Do not combine distinct instructions merely because they share a numeric value. "
+    "Target measured Flesch-Kincaid Grade Level (FKGL) 5.0–6.9, but never change or omit "
+    "an instruction to meet readability. Use unnumbered bullets when the source uses a list. "
+    "Preserve each distinct protected marker exactly at least once; its repetition count "
+    "need not match the source, but all instructions and value-to-instruction associations must remain. "
+    "Return only the simplified source instructions."
 )
 
 _TRANSLATE_ES_SYSTEM_PROMPT = (
@@ -44,7 +51,11 @@ _BACK_TRANSLATE_SYSTEM_PROMPT = (
 _SAFETY_JUDGE_SYSTEM_PROMPT = (
     "You are an independent pediatric clinical safety auditor. Compare the "
     "original clinical text and structured orders against the simplified "
-    "English instructions. Wording may change; compare clinical meaning, not exact sentences. Identify any factual drift, omitted red-flag "
+    "English instructions. Only simpler vocabulary and sentence structure are authorized; "
+    "reject added advice, invented explanations, omitted instructions, changed conditions, "
+    "negations, timing, urgency, or value-to-instruction associations. A value appearing "
+    "at least once does not prove that all instructions using it survived. "
+    "Compare each source instruction with its simplified counterpart. Identify any factual drift, omitted red-flag "
     "warnings, or contradictory advice. Respond with ONLY a JSON object "
     "matching this schema, with no surrounding text: "
     '{"overall_verdict": "PASS|NEEDS_REVIEW|FLAGGED_FOR_REVIEW", '
@@ -56,7 +67,7 @@ _SAFETY_JUDGE_SYSTEM_PROMPT = (
 
 def _chat(client, deployment: str, system_prompt: str, user_content: str) -> str:
     system_prompt += (
-        " Preserve every [[CLEAR_...]] marker exactly, including its occurrence count. "
+        " Preserve every distinct [[CLEAR_...]] marker exactly at least once. Repetition counts need not match, but every instruction and its associated values must remain intact. "
         "Markers represent protected clinical values; do not infer, translate, or invent numeric values."
     )
     response = client.chat.completions.create(
@@ -90,11 +101,11 @@ def format_orders(orders: ClinicalOrders) -> str:
 
 
 def simplify_to_plain_language(client, deployment: str, composite_template_text: str, orders: ClinicalOrders, *, previous_fkgl: float | None = None) -> str:
-    """LLM1: rewrite the clinical text at a 5th-6th grade level."""
+    """LLM1: simplify existing wording without adding or changing instructions."""
     protected = ProtectedText(composite_template_text)
     prompt = _SIMPLIFY_SYSTEM_PROMPT
     if previous_fkgl is not None:
-        direction = "shorter sentences and simpler vocabulary" if previous_fkgl > 6.9 else "slightly fuller sentences while keeping familiar vocabulary"
+        direction = "shorter sentences and simpler vocabulary" if previous_fkgl > 6.9 else "faithful sentence-boundary adjustments without adding words, explanations, or instructions"
         prompt += f" A previous attempt scored FKGL {previous_fkgl:.2f}; use {direction} to reach 5.0–6.9. Preserve all information."
     return protected.restore(_chat(client, deployment, prompt, protected.masked))
 
