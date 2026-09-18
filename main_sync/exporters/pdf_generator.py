@@ -26,19 +26,26 @@ from schemas.instruction_packet import (
 )
 
 
+def _apply_inline_markdown(html_text: str) -> str:
+    """Render markdown emphasis markers as styled text instead of literal characters."""
+    html_text = re.sub(r"\*\*(?=\S)(.+?)(?<=\S)\*\*", r"<b>\1</b>", html_text)
+    html_text = re.sub(r"(?<![\w*])\*(?=\S)([^*\n]+?)(?<=\S)\*(?![\w*])", r"<i>\1</i>", html_text)
+    return html_text
+
+
 def _format_for_reportlab(text: str, protected_values=()) -> str:
     """Escape supplied text, retaining line breaks and bolding protected values."""
     if not text:
         return ""
     values = sorted(set(protected_values), key=len, reverse=True)
     if not values:
-        return escape(text).replace("\n", "<br/>")
+        return _apply_inline_markdown(escape(text)).replace("\n", "<br/>")
     pattern = re.compile(r"(?<![\w.,/+\-])(?:" + "|".join(re.escape(v) for v in values) + r")(?!\w|\s*/|\.\d)")
     parts, offset = [], 0
     for match in pattern.finditer(text):
-        parts.extend([escape(text[offset:match.start()]), "<b>" + escape(match.group()) + "</b>"])
+        parts.extend([_apply_inline_markdown(escape(text[offset:match.start()])), "<b>" + escape(match.group()) + "</b>"])
         offset = match.end()
-    parts.append(escape(text[offset:]))
+    parts.append(_apply_inline_markdown(escape(text[offset:])))
     return "".join(parts).replace("\n", "<br/>")
 
 
@@ -52,13 +59,93 @@ def _ordered_language_sections(packet: InstructionPacket) -> list[tuple[str, str
     return [("ENGLISH", packet.simplified_en)]
 
 
-# Section titles arrive as "=== HOME CARE ===" scaffolding. They are rendered
-# as coloured ribbons instead: presentation only, wording is never changed.
+# Section titles arrive in several shapes depending on how the text was
+# produced: "=== HOME CARE ===" loader scaffolding, markdown headings or bold
+# lines from the simplifier, or a bare short title such as "Signs to Watch For".
+# All of them are rendered as coloured ribbons: presentation only, the wording
+# itself is never changed.
 _SECTION_HEADING_RE = re.compile(r"^\s*={2,}\s*(.+?)\s*={2,}\s*$")
+_ATX_HEADING_RE = re.compile(r"^\s*#{1,6}\s+(.+?)\s*#*\s*$")
+_BOLD_LINE_RE = re.compile(r"^\s*(?:\*\*|__)(.+?)(?:\*\*|__)\s*:?\s*$")
+_BULLET_PREFIX_RE = re.compile(r"^\s*(?:[-*\u2022\u2013]\s+|\d+[.)]\s+)")
+_TRAILING_PUNCT_RE = re.compile(r"[.!?,;]$")
+_PARENTHETICAL_RE = re.compile(r"\([^)]*\)")
 
 _RIBBON_FILL = colors.Color(0, 0.72, 0.82, alpha=0.18)
 _RIBBON_ACCENT = colors.Color(0, 0.52, 0.62, alpha=0.75)
 _RIBBON_TEXT = colors.HexColor("#08424C")
+
+_MAX_HEADING_CHARS = 90
+_MAX_HEADING_WORDS = 12
+
+# Words that stay lower case inside an English or Spanish title.
+_TITLE_MINOR_WORDS = {
+    "a", "an", "and", "as", "at", "by", "for", "from", "if", "in", "of", "on",
+    "or", "the", "to", "with", "your",
+    "a\u00f1o", "al", "con", "de", "del", "en", "la", "las", "los", "para",
+    "por", "si", "su", "un", "una", "y",
+}
+
+
+def _plain_heading(text: str) -> str:
+    """Strip decorative markdown emphasis and trailing colons from a title."""
+    cleaned = text.strip().strip("*_").strip()
+    return cleaned.rstrip(":").strip()
+
+
+def _is_upper_case_title(text: str) -> bool:
+    """True when the title is written in capitals, ignoring parentheticals."""
+    core = _PARENTHETICAL_RE.sub(" ", text)
+    return any(char.isalpha() for char in core) and core.upper() == core
+
+
+def _is_title_case(text: str) -> bool:
+    """True when every significant word is capitalised, as titles usually are."""
+    words = [w for w in _PARENTHETICAL_RE.sub(" ", text).split() if any(c.isalpha() for c in w)]
+    if len(words) < 2:
+        return False
+    significant = 0
+    for index, word in enumerate(words):
+        lead = next((c for c in word if c.isalpha()), "")
+        if index and word.lower().strip(":") in _TITLE_MINOR_WORDS:
+            continue
+        significant += 1
+        if not lead.isupper():
+            return False
+    return significant >= 2
+
+
+def _detect_heading(line: str, *, starts_block: bool, ends_block: bool) -> Optional[str]:
+    """Return the title text when a line is a section heading, else None.
+
+    Explicitly marked headings (``=== X ===``, ``## X``, ``**X**``) always win.
+    Unmarked lines qualify only when they read like a standalone title, so the
+    same wording is ribboned no matter which module or model produced it.
+    """
+    stripped = line.strip()
+    if not stripped or _BULLET_PREFIX_RE.match(line):
+        return None
+
+    for pattern in (_SECTION_HEADING_RE, _ATX_HEADING_RE, _BOLD_LINE_RE):
+        match = pattern.match(stripped)
+        if match:
+            title = _plain_heading(match.group(1))
+            return title or None
+
+    if _TRAILING_PUNCT_RE.search(stripped):
+        return None
+    candidate = _plain_heading(stripped)
+    if not candidate or not any(char.isalpha() for char in candidate):
+        return None
+    if len(candidate) > _MAX_HEADING_CHARS or len(candidate.split()) > _MAX_HEADING_WORDS:
+        return None
+
+    if stripped.endswith(":") or _is_upper_case_title(candidate):
+        return candidate
+    # A capitalised title on its own line, separated from the surrounding body.
+    if _is_title_case(candidate) and (starts_block or ends_block):
+        return candidate
+    return None
 
 
 def _split_into_blocks(text: str) -> list[tuple[str, str]]:
@@ -73,11 +160,14 @@ def _split_into_blocks(text: str) -> list[tuple[str, str]]:
             blocks.append(("body", "\n".join(body)))
         body.clear()
 
-    for line in text.splitlines():
-        match = _SECTION_HEADING_RE.match(line)
-        if match:
+    lines = text.splitlines()
+    for index, line in enumerate(lines):
+        previous_blank = index == 0 or not lines[index - 1].strip()
+        next_blank = index + 1 >= len(lines) or not lines[index + 1].strip()
+        heading = _detect_heading(line, starts_block=previous_blank, ends_block=next_blank)
+        if heading:
             flush()
-            blocks.append(("heading", match.group(1)))
+            blocks.append(("heading", heading))
         else:
             if not line.strip() and not body:
                 continue

@@ -289,5 +289,99 @@ class TestMockDataLoader(unittest.TestCase):
             self.assertTrue(order_obj.urgent_fever_threshold)
 
 
+class TestPdfSectionRibbons(unittest.TestCase):
+    """Section titles must become ribbons for every module and heading style."""
+
+    def _headings(self, text):
+        from exporters.pdf_generator import _split_into_blocks
+
+        return [chunk for kind, chunk in _split_into_blocks(text) if kind == "heading"]
+
+    def test_every_mock_module_and_version_yields_ribbon_headings(self):
+        from app.mock_components import MOCK_MODULES
+
+        for condition, versions in MOCK_MODULES.items():
+            for version, template in versions.items():
+                with self.subTest(condition=condition, version=version):
+                    headings = self._headings(template)
+                    self.assertTrue(headings, "module produced no ribbon heading")
+                    for heading in headings:
+                        self.assertNotIn("=", heading)
+                        self.assertFalse(heading.startswith("#"))
+                        self.assertFalse(heading.endswith(":"))
+
+    def test_loader_scaffolded_sections_become_headings_for_all_categories(self):
+        from storage.github_loader import adapt_modules
+
+        raw = {
+            "version": "v2.0.0",
+            "handout_template_structure": [
+                {"section": "home_care"},
+                {"section": "when_to_call"},
+            ],
+            "instructions": [
+                {"category": "sickle_cell_pain", "type": "home_care",
+                 "instruction_text": "Give medicine every 6 hours."},
+                {"category": "sickle_cell_pain", "type": "when_to_call",
+                 "instruction_text": "Call for chest pain."},
+                {"category": "fever_neutropenia", "type": "when_to_call",
+                 "instruction_text": "Call the clinic for any fever."},
+                {"category": "chemo_nausea_hydration", "type": "home_care",
+                 "instruction_text": "Offer small sips of fluid."},
+            ],
+        }
+        for category, versions in adapt_modules(raw).items():
+            for version, text in versions.items():
+                with self.subTest(category=category, version=version):
+                    self.assertTrue(self._headings(text))
+                    self.assertNotIn("===", "".join(self._headings(text)))
+
+    def test_heading_styles_are_recognised_consistently(self):
+        cases = {
+            "=== HOME CARE ===\n- Rest at home.": ["HOME CARE"],
+            "## Signs to Watch For\nCall the clinic.": ["Signs to Watch For"],
+            "**Medicines**\nGive with food.": ["Medicines"],
+            "WHEN TO GO TO THE ER\nGo now.": ["WHEN TO GO TO THE ER"],
+            "Home care:\nRest at home.": ["Home care"],
+            "Cuidados en Casa\n\nDescanse en casa.": ["Cuidados en Casa"],
+        }
+        for text, expected in cases.items():
+            with self.subTest(text=text):
+                self.assertEqual(self._headings(text), expected)
+
+    def test_instruction_sentences_are_never_turned_into_headings(self):
+        body = (
+            "Give 200 mg every 6 hours.\n"
+            "- Rest at home.\n"
+            "Call 901-595-3300 if fever reaches 100.4 F.\n"
+            "Hydration Strategy: drink small sips of water often."
+        )
+        self.assertEqual(self._headings(body), [])
+
+    def test_headings_render_without_scaffolding_characters_in_pdf(self):
+        from schemas.instruction_packet import ClinicalOrders, InstructionPacket, MedicationOrder
+        from exporters.pdf_generator import create_bilingual_pdf
+
+        orders = ClinicalOrders(
+            patient_id="SYN-PED-009",
+            diagnosis="Sickle Cell Pain Crisis",
+            medications=[MedicationOrder(name="Ibuprofen", dose="200 mg", route="oral", frequency="q6h")],
+            urgent_fever_threshold="100.4°F",
+            emergency_fever_threshold="101.0°F",
+            daytime_phone="901-595-3300",
+            after_hours_phone="901-595-3300",
+        )
+        packet = InstructionPacket(
+            packet_id="PKT-PDF-RIBBON",
+            condition="sickle_cell_pain",
+            clinical_orders=orders,
+            simplified_en="=== HOME CARE ===\n- Give 200 mg every 6 hours.\n\n## Signs to Watch For\nCall 901-595-3300.",
+            status="APPROVED",
+        )
+        pdf_bytes = create_bilingual_pdf(packet)
+        self.assertTrue(pdf_bytes.startswith(b"%PDF-"))
+        self.assertNotIn(b"=== ", pdf_bytes)
+
+
 if __name__ == "__main__":
     unittest.main()
