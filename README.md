@@ -41,4 +41,6 @@ Presentation layer: an interactive, mobile-friendly plan: plain-language section
 
 The goal is not a perfect production system. The goal is a clear, honest, useful result that the team can explain and others can build on.
 
+## Workflow
+<img width="1920" height="1080" alt="Untitled 001" src="https://github.com/user-attachments/assets/dba63e6d-15b7-44c4-a923-1fb5a99782c7" />
 
