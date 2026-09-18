@@ -11,6 +11,8 @@ class ReviewLibrary:
         self._inputs: dict[str, str] = {}
 
     def save(self, packet: InstructionPacket) -> None:
+        if packet.status in {'APPROVED', 'EDITED_AND_APPROVED'} and packet.evaluation_metrics and packet.evaluation_metrics.protection_failures:
+            raise ValueError('Protected-value failures must be resolved before publishing.')
         if packet.status not in {'APPROVED', 'EDITED_AND_APPROVED', 'REJECTED_DRIFT'}:
             raise ValueError('Only reviewed packets can be saved.')
         if packet.status == 'REJECTED_DRIFT' and not (

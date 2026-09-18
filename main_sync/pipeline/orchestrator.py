@@ -9,9 +9,9 @@ from uuid import uuid4
 
 from pipeline import live_llm
 from pipeline.evaluator import check_verbatim, evaluate_text, content_findings, fkgl_passes, ReadabilityTargetError
-from pipeline.protection import ProtectionError
+from pipeline.protection import ProtectionError, numeric_findings
 from pipeline.llms import AVAILABLE_MODELS, get_client
-from schemas.instruction_packet import ClinicalOrders, EvaluationMetrics, InstructionPacket
+from schemas.instruction_packet import ClinicalOrders, EvaluationMetrics, InstructionPacket, SafetyJudgeResult
 
 
 def _bind_template(template: str, orders: ClinicalOrders) -> str:
@@ -89,6 +89,16 @@ def _enforce_deterministic_safety_gate(
             + "."
         )
     return metrics
+
+
+def _reviewable_call(stage, operation):
+    """Keep a rejected model draft only when protection supplied a safe preview."""
+    try:
+        return operation(), []
+    except ProtectionError as exc:
+        if exc.draft_text is None:
+            raise
+        return exc.draft_text, [f"{stage}: {finding}" for finding in exc.findings]
 
 
 class PipelineOrchestrator:
@@ -216,9 +226,9 @@ class PipelineOrchestrator:
         steps are skipped entirely and both panes remain empty; the family does
         not need a Spanish handout, so no unauthorized translation is produced.
 
-        Raises `ValueError` if inputs are missing/invalid, or if the LLM1
-        simplification/translation calls fail; the Safety Judge call alone is
-        resilient (specs/01 Section 2.3) and never raises.
+        Protected-output failures return pending review-only drafts with findings.
+        Transport/configuration failures and exhausted FKGL retries still raise.
+        The Safety Judge itself is resilient (specs/01 Section 2.3).
         """
         if not all(value.strip() for value in (
             composite_template_text, module_version, condition, orders.order_version
@@ -231,30 +241,21 @@ class PipelineOrchestrator:
         previous_fkgl = None
         # A bounded retry loop avoids hanging or publishing an unmeasured draft.
         for attempt in range(1, 4):
-            english = live_llm.simplify_to_plain_language(
+            english, failures = _reviewable_call("English simplification", lambda: live_llm.simplify_to_plain_language(
                 llm1_client, llm1_deployment, source, saved_orders, previous_fkgl=previous_fkgl,
-            )
+            ))
             metrics = evaluate_text(english, saved_orders)
-            if metrics.verbatim_mismatches or content_findings(source, english, saved_orders)[1]:
-                raise ProtectionError("Simplified English changed protected clinical values.")
+            if not failures:
+                failures = [f"English simplification: {finding}" for finding in numeric_findings(source, english)]
+            if failures:
+                break  # Keep the failed draft; do not translate or overwrite it with retries.
             if fkgl_passes(metrics.fkgl_score):
                 break
             previous_fkgl = metrics.fkgl_score
         else:
             raise ReadabilityTargetError(metrics.fkgl_score, 3)
-        spanish = ""
-        back = ""
-        llm2_client, llm2_deployment = get_client(self.llm2_model)
-        if translate:
-            spanish = live_llm.translate_to_spanish(llm1_client, llm1_deployment, english)
-            back = live_llm.back_translate_to_english(llm2_client, llm2_deployment, spanish)
-
-        metrics.safety_judge = live_llm.judge_safety(
-            llm2_client, llm2_deployment, composite_template_text, english, saved_orders
-        )
-        metrics = _enforce_deterministic_safety_gate(
-            metrics, spanish, back, saved_orders, source=source, english=english,
-            require_bilingual=translate,
+        spanish, back, metrics = self._complete_live_review(
+            composite_template_text, source, english, saved_orders, metrics, failures, translate,
         )
 
         return InstructionPacket(
@@ -290,25 +291,12 @@ class PipelineOrchestrator:
         revision.created_at = datetime.now(timezone.utc).isoformat()
         revision.simplified_en = edited_en
 
-        llm2_client, llm2_deployment = get_client(self.llm2_model)
-        if translate:
-            llm1_client, llm1_deployment = get_client(self.llm1_model)
-            revision.translated_es = live_llm.translate_to_spanish(llm1_client, llm1_deployment, edited_en)
-            revision.back_translated_en = live_llm.back_translate_to_english(
-                llm2_client, llm2_deployment, revision.translated_es
-            )
-        else:
-            revision.translated_es = ""
-            revision.back_translated_en = ""
-
+        source = compose_clinical_text(revision.original_clinical_text, revision.clinical_orders)
+        failures = [f"English recheck: {finding}" for finding in numeric_findings(source, edited_en)]
         metrics = evaluate_text(edited_en, revision.clinical_orders)
-        metrics.safety_judge = live_llm.judge_safety(
-            llm2_client, llm2_deployment, revision.original_clinical_text, edited_en, revision.clinical_orders
-        )
-        metrics = _enforce_deterministic_safety_gate(
-            metrics, revision.translated_es, revision.back_translated_en, revision.clinical_orders,
-            source=compose_clinical_text(revision.original_clinical_text, revision.clinical_orders), english=edited_en,
-            require_bilingual=translate,
+        revision.translated_es, revision.back_translated_en, metrics = self._complete_live_review(
+            revision.original_clinical_text, source, edited_en, revision.clinical_orders,
+            metrics, failures, translate,
         )
         revision.evaluation_metrics = metrics
 
@@ -320,3 +308,40 @@ class PipelineOrchestrator:
         revision.clinician_notes = None
         revision.reviewed_at = None
         return revision
+
+    def _complete_live_review(self, original, source, english, orders, metrics, failures, translate):
+        """Stop at the first failed stage, preserving every available review pane."""
+        failures = list(failures)
+        for value in metrics.verbatim_mismatches:
+            if not any(value in finding for finding in failures):
+                failures.append(f"English: missing or changed safety token: {value}.")
+        for value in content_findings(source, english, orders)[1]:
+            if not any(value in finding for finding in failures):
+                failures.append(f"English: unexpected safety token: {value}.")
+        spanish = back = ""
+        if not failures:
+            llm2_client, llm2_deployment = get_client(self.llm2_model)
+            if translate:
+                llm1_client, llm1_deployment = get_client(self.llm1_model)
+                spanish, failures = _reviewable_call("Spanish translation", lambda: live_llm.translate_to_spanish(
+                    llm1_client, llm1_deployment, english,
+                ))
+                if not failures:
+                    back, failures = _reviewable_call("English back-translation", lambda: live_llm.back_translate_to_english(
+                        llm2_client, llm2_deployment, spanish,
+                    ))
+        metrics.protection_failures = failures
+        if failures:
+            metrics.safety_judge = SafetyJudgeResult(
+                overall_verdict="FLAGGED_FOR_REVIEW",
+                explanation="Protected-value checks failed. Model safety judging and later stages were skipped; draft is for clinician review only.",
+            )
+        else:
+            metrics.safety_judge = live_llm.judge_safety(
+                llm2_client, llm2_deployment, original, english, orders,
+            )
+        metrics = _enforce_deterministic_safety_gate(
+            metrics, spanish, back, orders, source=source, english=english,
+            require_bilingual=translate,
+        )
+        return spanish, back, metrics

@@ -47,6 +47,7 @@ class EvaluationMetrics(BaseModel):
     verbatim_matches: List[str] = Field(default_factory=list)
     verbatim_mismatches: List[str] = Field(default_factory=list)
     verbatim_match_percent: float = 100.0
+    protection_failures: List[str] = Field(default_factory=list)
     safety_judge: Optional[SafetyJudgeResult] = None
 
 

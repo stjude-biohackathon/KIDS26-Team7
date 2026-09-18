@@ -21,7 +21,7 @@ Participant 2 owns the data lifecycle, security compliance, persistence, and pri
 - **Key Models**:
   - `MedicationOrder`: Name, dose, route, frequency, special instructions.
   - `ClinicalOrders`: Patient ID, age, diagnosis, medications list, urgent/emergency fever thresholds, daytime/after-hours phone numbers, `order_id`, `order_version`.
-  - `EvaluationMetrics`: Readability scores (FKGL), verbatim preservation match/mismatch flags, Safety Judge verdict.
+  - `EvaluationMetrics`: Readability scores (FKGL), verbatim preservation match/mismatch flags, Safety Judge verdict, and stage-labeled `protection_failures` (default empty list for compatibility).
   - `InstructionPacket`: Master packet binding original input, simplified EN, translated ES, back-translated EN, review status (`APPROVED`, `EDITED_AND_APPROVED`, `REJECTED_DRIFT`, `PENDING`), `module_version`, `order_version`, `parent_packet_id`, and `is_simulation`.
 - **Physician Annotation Logic**:
   - `get_physician_annotation(packet)` helper returning:

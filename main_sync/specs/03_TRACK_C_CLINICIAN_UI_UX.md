@@ -72,6 +72,8 @@ Generation replaces those controls with FKGL (one decimal), verbatim percentage 
   - `edits_checked_banner`: Boolean triggering re-evaluation success banner.
 
 ### 2.4 Action Footer & Review Governance
+- **Failed protected-value drafts**: Keep the English draft and any available translation panes visible. Show a not-for-patient-use banner, stage-specific failed safety tokens, and a FAILED verbatim metric with detailed help. Missing values are not auto-filled; corrupted markers are labeled unresolved. Clear approval eligibility and PDF downloads. A protection-failed recheck retains its draft instead of falling back to local checks and discarding failed translation text. Only a fresh passing revision can be published; rejection may still create a marked audit copy.
+
 - **Button 1: "Save and check edits"**:
   - Re-runs automated quality gates (FKGL readability + verbatim locks) on user-edited text.
   - Re-generates Spanish translation and back-translation to match edits only when requested. English-only rechecks call the safety judge without translation calls. Successful checks are bound to the exact packet revision; later edits invalidate eligibility.

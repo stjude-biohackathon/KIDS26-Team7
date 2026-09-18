@@ -27,6 +27,8 @@ def approval_blockers(packet: InstructionPacket, edited_text: str, checked_packe
     if new_values:
         reasons.append('Instructions contain clinical values not supplied by the source or orders.')
     metrics = packet.evaluation_metrics
+    if metrics is not None and metrics.protection_failures:
+        reasons.append('Protected-value checks failed. Correct the draft and run fresh checks before approval.')
     if metrics is None or not math.isfinite(metrics.fkgl_score):
         reasons.append('Readability evaluation is unavailable.')
     if metrics is not None and not fkgl_passes(metrics.fkgl_score):

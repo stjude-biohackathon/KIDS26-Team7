@@ -46,6 +46,8 @@ def create_bilingual_pdf(packet: InstructionPacket) -> bytes:
     Renders a full-width English or 2-column bilingual pediatric discharge handout
     with physician verification banner, verbatim markers, and audit sign-off footer.
     """
+    if packet.status in {'APPROVED', 'EDITED_AND_APPROVED'} and packet.evaluation_metrics and packet.evaluation_metrics.protection_failures:
+        raise ValueError('Protected-value failures must be resolved before publishing.')
     buf = io.BytesIO()
     doc = SimpleDocTemplate(
         buf,

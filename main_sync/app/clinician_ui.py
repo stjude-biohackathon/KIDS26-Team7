@@ -489,7 +489,7 @@ def _run_generation(want_spanish: bool) -> None:
         st.session_state["live_pipeline_reason"] = live_reason
         st.session_state["live_data_notice"] = data_unavailable
         st.session_state["checked_packet"] = (
-            packet.model_dump(mode="json") if live_checked else None
+            packet.model_dump(mode="json") if live_checked and not packet.evaluation_metrics.protection_failures else None
         )
         st.session_state["current_packet"] = packet
         st.session_state["spanish_requested"] = want_spanish
@@ -597,15 +597,17 @@ else:
             help="Flesch-Kincaid Grade Level calculated via textstat. Pediatric discharge goal is 5th–6th grade.",
         )
     with m_col2:
-        if metrics.verbatim_mismatches:
+        if metrics.protection_failures:
+            verbatim_help = "\n".join(metrics.protection_failures)
+        elif metrics.verbatim_mismatches:
             verbatim_help = "Missing safety tokens: " + ", ".join(metrics.verbatim_mismatches)
         else:
             verbatim_help = "All safety-critical values preserved verbatim."
         st.metric(
             label="Verbatim Score",
-            value=f"{round(metrics.verbatim_match_percent):d}%",
-            delta="All locked" if not metrics.verbatim_mismatches else f"{len(metrics.verbatim_mismatches)} missing",
-            delta_color="normal" if not metrics.verbatim_mismatches else "inverse",
+            value="FAILED" if metrics.protection_failures else f"{round(metrics.verbatim_match_percent):d}%",
+            delta="Protected values failed" if metrics.protection_failures else ("All locked" if not metrics.verbatim_mismatches else f"{len(metrics.verbatim_mismatches)} missing"),
+            delta_color="inverse" if metrics.protection_failures or metrics.verbatim_mismatches else "normal",
             help=verbatim_help,
         )
     with m_col3:
@@ -634,6 +636,13 @@ else:
             st.session_state["edits_checked_banner"] = False
             st.session_state["reject_dialog_packet_id"] = None
             st.rerun()
+
+    if metrics.protection_failures:
+        st.error("DRAFT — NOT FOR PATIENT USE. Protected values failed validation. Review the draft and failed safety tokens below; approval is blocked.")
+        st.markdown("**Failed safety tokens**")
+        for finding in metrics.protection_failures:
+            st.text(finding)
+        st.caption("Only intact markers were restored. Missing values were not inserted; unresolved markers require clinician correction. Later model stages were skipped.")
 
     if metrics.safety_judge and metrics.safety_judge.factual_drift_detected:
         st.warning("Safety Alert: " + metrics.safety_judge.explanation)
@@ -741,9 +750,10 @@ else:
                 )
                 st.session_state["edits_checked_banner"] = False
             else:
-                st.session_state["checked_packet"] = packet.model_dump(mode="json")
+                protection_failed = bool(packet.evaluation_metrics.protection_failures)
+                st.session_state["checked_packet"] = None if protection_failed else packet.model_dump(mode="json")
                 st.session_state["edit_check_error"] = None
-                st.session_state["edits_checked_banner"] = True
+                st.session_state["edits_checked_banner"] = not protection_failed
             st.session_state["current_packet"] = packet
             st.rerun()
 

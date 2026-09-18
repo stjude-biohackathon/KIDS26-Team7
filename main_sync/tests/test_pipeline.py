@@ -240,11 +240,14 @@ class LivePipelineTests(unittest.TestCase):
         self.assertIn('5 mg',revision.evaluation_metrics.verbatim_mismatches)
         self.assertEqual(packet.simplified_en,'Give 5 mg.')
 
-    def test_lost_translation_value_fails_before_a_packet_can_be_published(self):
+    def test_lost_translation_value_returns_a_blocked_review_draft(self):
         orders=synthetic_orders(medications=[MedicationOrder(name='Demo',dose='5 mg')])
         _,_,context=self.clients(drop_translation=True)
-        with context, self.assertRaises(ValueError):
-            PipelineOrchestrator().generate_live('Give 5 mg.',orders,module_version='v1',condition='demo')
+        with context:
+            result = PipelineOrchestrator().generate_live('Give 5 mg.',orders,module_version='v1',condition='demo')
+        self.assertEqual(result.status, 'PENDING')
+        self.assertTrue(result.evaluation_metrics.protection_failures)
+        self.assertEqual(result.evaluation_metrics.safety_judge.overall_verdict, 'FLAGGED_FOR_REVIEW')
 
     def test_judge_failure_flags_without_crashing_workflow(self):
         orders=synthetic_orders(medications=[MedicationOrder(name='Demo',dose='5 mg')])

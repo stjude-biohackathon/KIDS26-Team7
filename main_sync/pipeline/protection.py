@@ -14,7 +14,35 @@ _SENTINEL = re.compile(r'\[\[CLEAR_[a-f0-9]+_\d+\]\]')
 
 
 class ProtectionError(ValueError):
-    """A model failed exact protected-value preservation."""
+    """A rejected response with optional in-memory, review-only draft details.
+
+    The exception message never includes clinical text. Callers must not log
+    the draft or findings; they are intended only for the clinician review.
+    """
+    def __init__(self, message: str, *, draft_text: str | None = None, findings=()):
+        super().__init__(message)
+        self.draft_text = draft_text
+        self.findings = list(findings)
+
+
+UNRESOLVED_VALUE = "[UNRESOLVED PROTECTED VALUE]"
+
+
+def numeric_findings(source: str, candidate: str) -> list[str]:
+    """Compare actual value occurrences for fresh checks of clinician edits."""
+    expected = Counter(m.group() for m in _VALUES.finditer(source))
+    actual = Counter(m.group() for m in _VALUES.finditer(candidate))
+    findings = []
+    for value, count in expected.items():
+        if actual[value] < count:
+            findings.append(f"Missing protected value: {value} (expected {count} occurrence(s), found {actual[value]}).")
+        elif actual[value] > count:
+            findings.append(f"Duplicated protected value: {value} (expected {count} occurrence(s), found {actual[value]}).")
+    for value in (v for v in actual if v not in expected):
+        findings.append(f"Unexpected numeric value: {value}.")
+    if UNRESOLVED_VALUE in candidate or '[[CLEAR_' in candidate.upper():
+        findings.append("Unknown or altered protection marker remains unresolved.")
+    return findings
 
 
 class ProtectedText:
@@ -36,9 +64,25 @@ class ProtectedText:
 
     def restore(self, response: str, *, require_all: bool = True) -> str:
         tokens = Counter(_SENTINEL.findall(response))
-        if set(tokens) - self.values.keys() or (require_all and tokens != self.counts):
-            raise ProtectionError('Protected values were omitted, duplicated, or changed by the model.')
+        findings = []
+        for token, count in self.counts.items():
+            if require_all and tokens[token] != count:
+                kind = "Missing" if tokens[token] < count else "Duplicated"
+                findings.append(f"{kind} protected value: {self.values[token]} (expected {count} occurrence(s), found {tokens[token]}).")
+        if set(tokens) - self.values.keys():
+            findings.append("Unknown protection marker returned by the model; its value cannot be recovered.")
         remainder = _SENTINEL.sub('', response)
-        if '[[CLEAR_' in remainder or (require_all and _VALUES.search(remainder)):
-            raise ProtectionError('Model output contains altered markers or new numeric values.')
+        if '[[CLEAR_' in remainder.upper():
+            findings.append("Unknown or altered protection marker returned by the model; its value cannot be recovered.")
+        if require_all:
+            numeric_remainder = re.sub(r'\[\[CLEAR_[^\]\r\n]*(?:\]\]?)?', '', remainder, flags=re.I)
+            for value in dict.fromkeys(m.group() for m in _VALUES.finditer(numeric_remainder)):
+                findings.append(f"Unexpected numeric value: {value}.")
+        if findings:
+            # Restore only exact, known markers for display. Never invent a
+            # missing value or guess what a corrupted marker was meant to be.
+            draft = _SENTINEL.sub(lambda m: self.values.get(m.group(), UNRESOLVED_VALUE), response)
+            draft = re.sub(r'\[\[CLEAR_[^\]\r\n]*(?:\]\]?)?', UNRESOLVED_VALUE, draft, flags=re.I)
+            raise ProtectionError("Protected values failed validation; draft requires review.",
+                                  draft_text=draft, findings=findings)
         return _SENTINEL.sub(lambda m: self.values[m.group()], response)

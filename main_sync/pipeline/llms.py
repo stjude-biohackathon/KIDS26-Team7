@@ -221,7 +221,7 @@ def describe_model_error(alias: str, exc: Exception) -> str:
         return f"{alias}: FKGL remains {exc.score:.2f} after {exc.attempts} attempts; required range is 5.0–6.9. Retry generation or revise the source."
     from pipeline.protection import ProtectionError
     if isinstance(exc, ProtectionError):
-        return f"{alias}: protected clinical values were not preserved; translation was rejected."
+        return f"{alias}: protected-value input validation failed; no reviewable model response was available."
     if isinstance(exc, ValueError):
         return f"{alias}: input or model-output validation failed; no checked instructions were produced."
     status = getattr(exc, "status_code", None)
