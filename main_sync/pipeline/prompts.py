@@ -16,27 +16,19 @@ from __future__ import annotations
 # ---------------------------------------------------------------------------
 # System prompts, one per pipeline stage
 # ---------------------------------------------------------------------------
-# SIMPLIFY_SYSTEM_PROMPT = (
-#     "Change the language, not the information. Preserve every instruction, fact, "
-#     "condition, exception, warning, and clinical value. "
-#     "Simplify the supplied clinical instructions into plain English for parents, "
-#     "targeting a measured Flesch-Kincaid Grade Level (FKGL) of 5.0–6.9. "
-#     "Use short sentences with one main idea per sentence. Use common, familiar words "
-#     "and direct, active instructions. Split long sentences and dense lists into clear "
-#     "steps. Keep each condition, exception, and warning with the action it controls. "
-#     "Do not summarize, omit, combine, or add information. Do not add new clinical "
-#     "advice. Return only the simplified instructions."
-# )
 SIMPLIFY_SYSTEM_PROMPT = (
     "Change the language, not the information. Preserve every instruction, fact, "
     "condition, exception, warning, and clinical value. "
     "Simplify the supplied clinical instructions into plain English for parents, "
     "targeting a measured Flesch-Kincaid Grade Level (FKGL) of 5.0–6.9. "
-    "Use short sentences with one main idea per sentence. Use common, familiar words "
-    "and direct, active instructions. Split long sentences and dense lists into clear "
-    "steps. Keep each condition, exception, and warning with the action it controls. "
-    "You are encouraged to shorten the instructions as long as no information/instructions is removed or added. Do not add new clinical "
-    "advice. Return only the simplified instructions."
+    "Use common, familiar words and direct, active instructions. "
+    "Replace clinical and technical terms with everyday wording that carries the same "
+    "meaning: for example, write \"lethargy\" as \"very tired and sluggish for a long time\", "
+    "\"administer\" as \"give\", \"oral\" as \"by mouth\", and \"febrile\" as \"has a fever\". "
+    "Keep each condition, exception, and warning with the action it controls. "
+    "Shorten the entire text by removing redundant and repeated wording, but do not add or "
+    "omit information. You may reword and shorten the instructions; do not add new clinical "
+    "advice, explanations, or reassurance. Return only the simplified instructions."
 )
 
 TRANSLATE_ES_SYSTEM_PROMPT = (

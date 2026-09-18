@@ -80,15 +80,21 @@ class SimplificationTests(unittest.TestCase):
         translate.assert_called_once()
 
     def test_simplification_prompt_uses_information_preservation_rule(self):
+        from pipeline.prompts import SIMPLIFY_SYSTEM_PROMPT
         from pipeline.live_llm import _SIMPLIFY_SYSTEM_PROMPT
+        self.assertIs(_SIMPLIFY_SYSTEM_PROMPT, SIMPLIFY_SYSTEM_PROMPT)
         self.assertIn(
             'Change the language, not the information. Preserve every instruction, fact, '
             'condition, exception, warning, and clinical value.',
-            _SIMPLIFY_SYSTEM_PROMPT,
+            SIMPLIFY_SYSTEM_PROMPT,
         )
-        self.assertIn('one main idea per sentence', _SIMPLIFY_SYSTEM_PROMPT)
-        self.assertIn('common, familiar words', _SIMPLIFY_SYSTEM_PROMPT)
-        self.assertIn('no information/instructions is removed or added', _SIMPLIFY_SYSTEM_PROMPT)
+        self.assertIn('common, familiar words', SIMPLIFY_SYSTEM_PROMPT)
+        # Shorter output is authorized only by cutting redundant wording.
+        self.assertIn('Shorten the entire text', SIMPLIFY_SYSTEM_PROMPT)
+        self.assertIn('do not add or omit information', SIMPLIFY_SYSTEM_PROMPT)
+        self.assertIn('do not add new clinical advice', SIMPLIFY_SYSTEM_PROMPT)
+        # Clinical jargon must be replaced with everyday wording.
+        self.assertIn('lethargy', SIMPLIFY_SYSTEM_PROMPT)
 
     def test_pipeline_readability_failure_or_unavailable_score_blocks_approval(self):
         from app.review import approval_blockers
