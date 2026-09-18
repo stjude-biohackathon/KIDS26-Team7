@@ -11,7 +11,7 @@ from pipeline import live_llm
 from pipeline.evaluator import check_verbatim, evaluate_text, content_findings, fkgl_passes
 from pipeline.protection import ProtectionError, numeric_findings
 from pipeline.llms import AVAILABLE_MODELS, get_client
-from schemas.instruction_packet import ClinicalOrders, EvaluationMetrics, InstructionPacket, SafetyJudgeResult
+from schemas.instruction_packet import ClinicalOrders, EvaluationMetrics, InstructionPacket
 
 
 def _bind_template(template: str, orders: ClinicalOrders) -> str:
@@ -66,6 +66,8 @@ def _enforce_deterministic_safety_gate(
     block, so a deterministic mismatch in any pane forces FLAGGED_FOR_REVIEW.
     """
     blocking = []
+    if metrics.protection_failures:
+        blocking.append("Protected-value validation failed")
     # Rephrasing warnings is permitted; the judge audits semantic preservation.
     _, unexpected = content_findings(source, english, orders)
     if not fkgl_passes(metrics.fkgl_score):
@@ -311,7 +313,7 @@ class PipelineOrchestrator:
         return revision
 
     def _complete_live_review(self, original, source, english, orders, metrics, failures, translate):
-        """Stop at the first failed stage, preserving every available review pane."""
+        """Run every requested stage and preserve all failures for clinician review."""
         failures = list(failures)
         for value in metrics.verbatim_mismatches:
             if not any(value in finding for finding in failures):
@@ -320,27 +322,27 @@ class PipelineOrchestrator:
             if not any(value in finding for finding in failures):
                 failures.append(f"English: unexpected safety token: {value}.")
         spanish = back = ""
-        if not failures:
-            llm2_client, llm2_deployment = get_client(self.llm2_model)
-            if translate:
-                llm1_client, llm1_deployment = get_client(self.llm1_model)
-                spanish, failures = _reviewable_call("Spanish translation", lambda: live_llm.translate_to_spanish(
+        llm2_client, llm2_deployment = get_client(self.llm2_model)
+        if translate:
+            llm1_client, llm1_deployment = get_client(self.llm1_model)
+            spanish, stage_failures = _reviewable_call(
+                "Spanish translation",
+                lambda: live_llm.translate_to_spanish(
                     llm1_client, llm1_deployment, english,
-                ))
-                if not failures:
-                    back, failures = _reviewable_call("English back-translation", lambda: live_llm.back_translate_to_english(
-                        llm2_client, llm2_deployment, spanish,
-                    ))
+                ),
+            )
+            failures.extend(stage_failures)
+            back, stage_failures = _reviewable_call(
+                "English back-translation",
+                lambda: live_llm.back_translate_to_english(
+                    llm2_client, llm2_deployment, spanish,
+                ),
+            )
+            failures.extend(stage_failures)
         metrics.protection_failures = failures
-        if failures:
-            metrics.safety_judge = SafetyJudgeResult(
-                overall_verdict="FLAGGED_FOR_REVIEW",
-                explanation="Protected-value checks failed. Model safety judging and later stages were skipped; draft is for clinician review only.",
-            )
-        else:
-            metrics.safety_judge = live_llm.judge_safety(
-                llm2_client, llm2_deployment, original, english, orders,
-            )
+        metrics.safety_judge = live_llm.judge_safety(
+            llm2_client, llm2_deployment, original, english, orders,
+        )
         metrics = _enforce_deterministic_safety_gate(
             metrics, spanish, back, orders, source=source, english=english,
             require_bilingual=translate,

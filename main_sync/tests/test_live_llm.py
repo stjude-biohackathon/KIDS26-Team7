@@ -91,6 +91,31 @@ class LiveLlmCallTests(unittest.TestCase):
         self.assertEqual(result, "Plain words.")
         client.chat.completions.create.assert_called_once()
 
+    def test_structured_model_context_omits_age(self):
+        rendered = live_llm.format_orders(synthetic_orders(age="8 years old"))
+        self.assertNotIn("Age:", rendered)
+        self.assertNotIn("8 years old", rendered)
+        self.assertIn("Dose: 5 mg", rendered)
+
+    def test_simplification_converts_markdown_to_editor_plain_text(self):
+        client = MagicMock()
+        def markdown_reply(**kwargs):
+            marker = kwargs['messages'][1]['content'].split('Give ', 1)[1].rstrip('.')
+            content = (
+                '### Care at Home\n\n'
+                f'- Give **the medicine**: {marker}.\n'
+                '1. [Call the clinic](https://example.invalid).'
+            )
+            return MagicMock(choices=[MagicMock(message=MagicMock(content=content))])
+        client.chat.completions.create.side_effect = markdown_reply
+        result = live_llm.simplify_to_plain_language(
+            client, "deploy", "Give 5 mg.", synthetic_orders()
+        )
+        self.assertEqual(
+            result,
+            'Care at Home\n\n• Give the medicine: 5 mg.\n• Call the clinic.',
+        )
+
     def test_empty_model_response_raises(self):
         client = self._mock_client("   ")
         with self.assertRaises(ValueError):

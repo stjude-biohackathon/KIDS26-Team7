@@ -35,7 +35,7 @@ def provider(fail_stage):
 
 
 class FailedDraftTests(unittest.TestCase):
-    def test_each_failed_stage_returns_a_flagged_draft_and_stops_later_calls(self):
+    def test_each_failed_stage_returns_a_flagged_draft_and_runs_all_requested_stages(self):
         for stage in ('English simplification', 'Spanish translation', 'English back-translation'):
             with self.subTest(stage=stage), provider(stage) as calls:
                 packet = PipelineOrchestrator().generate_live('Give 5 mg.', synthetic_orders(), condition='test', module_version='v1')
@@ -44,8 +44,11 @@ class FailedDraftTests(unittest.TestCase):
                 self.assertTrue(any(stage in f and '5 mg' in f for f in metrics.protection_failures))
                 self.assertTrue(any('10 mg' in f for f in metrics.protection_failures))
                 self.assertEqual(metrics.safety_judge.overall_verdict, 'FLAGGED_FOR_REVIEW')
-                self.assertEqual(calls[-1], stage)
-                self.assertNotIn('judge', calls)
+                self.assertEqual(
+                    calls,
+                    ['English simplification', 'Spanish translation',
+                     'English back-translation', 'judge'],
+                )
                 self.assertIn('10 mg', getattr(packet, {'English simplification':'simplified_en','Spanish translation':'translated_es','English back-translation':'back_translated_en'}[stage]))
                 # A permissive judge/snapshot must not override deterministic failure.
                 metrics.safety_judge.overall_verdict = 'PASS'
@@ -70,8 +73,31 @@ class FailedDraftTests(unittest.TestCase):
         with provider('Spanish translation'):
             failed = PipelineOrchestrator().recheck_edits_live(original, 'Please give 5 mg.')
         self.assertEqual(failed.translated_es, 'Give 10 mg instead.')
-        self.assertEqual(failed.back_translated_en, '')
+        self.assertEqual(failed.back_translated_en, 'Give 10 mg instead.')
         self.assertTrue(failed.evaluation_metrics.protection_failures)
+
+    def test_age_and_incidental_numbers_are_not_protected(self):
+        from pipeline.protection import ProtectedText, numeric_findings
+        source = (
+            'Age 8 years. Infant age: 6 months. Step 1. Give 5 mg. Call 911 for a temperature of '
+            '100.4°F. Call again within 30 minutes.'
+        )
+        protected = ProtectedText(source)
+        self.assertIn('Age 8 years', protected.masked)
+        self.assertIn('age: 6 months', protected.masked)
+        self.assertIn('Step 1', protected.masked)
+        for clinical_value in ('5 mg', '911', '100.4°F', '30 minutes'):
+            self.assertNotIn(clinical_value, protected.masked)
+        self.assertEqual(
+            numeric_findings(
+                'Age 8 years. Infant age: 6 months. Give 5 mg.',
+                'Age 9 years. Infant age: 7 months. Give 5 mg.',
+            ),
+            [],
+        )
+        self.assertTrue(
+            numeric_findings('Age 8 years. Give 5 mg.', 'Age 8 years. Give 10 mg.')
+        )
 
     def test_marker_counts_and_unknown_markers_are_reported_without_guessing(self):
         from pipeline.protection import ProtectedText, ProtectionError

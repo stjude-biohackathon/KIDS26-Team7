@@ -656,7 +656,7 @@ else:
         st.markdown("**Failed safety tokens**")
         for finding in metrics.protection_failures:
             st.text(finding)
-        st.caption("Only intact markers were restored. Missing values were not inserted; unresolved markers require clinician correction. Later model stages were skipped.")
+        st.caption("Only intact markers were restored. Missing values were not inserted; unresolved markers require clinician correction. Requested translation, back-translation, and judging still run so every available draft can be reviewed.")
 
     if not 5.0 <= metrics.fkgl_score <= 6.9:
         st.error(

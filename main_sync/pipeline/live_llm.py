@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import json
 import math
-from pipeline.protection import ProtectedText
+from pipeline.protection import ProtectedText, ProtectionError
+from pipeline.text_formatting import to_editor_plain_text
 
 from schemas.instruction_packet import ClinicalOrders, SafetyJudgeResult
 
@@ -77,7 +78,7 @@ def _chat(client, deployment: str, system_prompt: str, user_content: str) -> str
 
 def format_orders(orders: ClinicalOrders) -> str:
     """Render only the structured fields an LLM needs to preserve verbatim."""
-    lines = [f"Diagnosis: {orders.diagnosis}", f"Age: {orders.age or 'unspecified'}"]
+    lines = [f"Diagnosis: {orders.diagnosis}"]
     for med in orders.medications:
         lines.append(
             f"Medication: {med.name} | Dose: {med.dose} | Route: {med.route} | "
@@ -98,7 +99,17 @@ def simplify_to_plain_language(client, deployment: str, composite_template_text:
     if previous_fkgl is not None:
         direction = "shorter sentences and simpler vocabulary" if previous_fkgl > 6.9 else "faithful sentence-boundary adjustments without adding words, explanations, or instructions"
         prompt += f" A previous attempt scored FKGL {previous_fkgl:.2f}; use {direction} to reach 5.0–6.9. Preserve all information."
-    return protected.restore(_chat(client, deployment, prompt, protected.masked))
+    response = _chat(client, deployment, prompt, protected.masked)
+    try:
+        restored = protected.restore(response)
+    except ProtectionError as exc:
+        raise ProtectionError(
+            "Protected values failed validation; draft requires review.",
+            draft_text=(to_editor_plain_text(exc.draft_text)
+                        if exc.draft_text is not None else None),
+            findings=exc.findings,
+        ) from None
+    return to_editor_plain_text(restored)
 
 
 def translate_to_spanish(client, deployment: str, simplified_en: str) -> str:

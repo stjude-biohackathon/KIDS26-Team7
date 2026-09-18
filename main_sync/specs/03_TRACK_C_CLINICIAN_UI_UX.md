@@ -72,7 +72,8 @@ Generation replaces those controls with FKGL (one decimal), verbatim percentage 
   - `edits_checked_banner`: Boolean triggering re-evaluation success banner.
 
 ### 2.4 Action Footer & Review Governance
-- **Failed protected-value drafts**: Keep the English draft and any available translation panes visible. Show a not-for-patient-use banner, stage-specific failed safety tokens, and a FAILED verbatim metric with detailed help. Missing values are not auto-filled; corrupted markers are labeled unresolved. Clear approval eligibility and PDF downloads. A protection-failed recheck retains its draft instead of falling back to local checks and discarding failed translation text. Only a fresh passing revision can be published; rejection may still create a marked audit copy.
+- **Failed protected-value drafts**: Keep the English draft and all requested translation panes visible. Translation, back-translation, and judging continue after check failures and accumulate findings; they cannot override an earlier failure. Show a not-for-patient-use banner, stage-specific failed safety tokens, and a FAILED verbatim metric with detailed help. Missing values are not auto-filled; corrupted markers are labeled unresolved. Clear approval eligibility and PDF downloads. Only a fresh passing revision can be published; rejection may still create a marked audit copy.
+- **Editor formatting**: Convert LLM Markdown to plain editable text before scoring and display. Remove headings, emphasis markers, code fences, link URLs, and HTML presentation tags while retaining the words, paragraph breaks, and normalized bullet structure.
 
 - **Button 1: "Save and check edits"**:
   - Re-runs automated quality gates (FKGL readability + verbatim locks) on user-edited text.
