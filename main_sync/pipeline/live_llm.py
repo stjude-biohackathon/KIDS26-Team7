@@ -56,7 +56,9 @@ _SAFETY_JUDGE_SYSTEM_PROMPT = (
     "negations, timing, urgency, or value-to-instruction associations. A value appearing "
     "at least once does not prove that all instructions using it survived. "
     "Compare each source instruction with its simplified counterpart. Identify any factual drift, omitted red-flag "
-    "warnings, or contradictory advice. Respond with ONLY a JSON object "
+    "warnings, or contradictory advice. Protected marker tokens identify matching values across the inputs. "
+    "Do not copy protected marker tokens into the JSON response; refer to them generically as protected clinical values. "
+    "Respond with ONLY a JSON object "
     "matching this schema, with no surrounding text: "
     '{"overall_verdict": "PASS|NEEDS_REVIEW|FLAGGED_FOR_REVIEW", '
     '"factual_drift_detected": bool, "omitted_red_flags": [string], '
@@ -65,11 +67,19 @@ _SAFETY_JUDGE_SYSTEM_PROMPT = (
 )
 
 
-def _chat(client, deployment: str, system_prompt: str, user_content: str) -> str:
-    system_prompt += (
-        " Preserve every distinct [[CLEAR_...]] marker exactly at least once. Repetition counts need not match, but every instruction and its associated values must remain intact. "
-        "Markers represent protected clinical values; do not infer, translate, or invent numeric values."
-    )
+def _chat(
+    client,
+    deployment: str,
+    system_prompt: str,
+    user_content: str,
+    *,
+    preserve_markers_in_response: bool = True,
+) -> str:
+    if preserve_markers_in_response:
+        system_prompt += (
+            " Preserve every distinct [[CLEAR_...]] marker exactly at least once. Repetition counts need not match, but every instruction and its associated values must remain intact. "
+            "Markers represent protected clinical values; do not infer, translate, or invent numeric values."
+        )
     response = client.chat.completions.create(
         model=deployment,
         messages=[
@@ -195,7 +205,13 @@ def judge_safety(
         return _judge_failure("PROTECTED_MARKER_ERROR")
 
     try:
-        raw = _chat(client, deployment, _SAFETY_JUDGE_SYSTEM_PROMPT, protected.masked)
+        raw = _chat(
+            client,
+            deployment,
+            _SAFETY_JUDGE_SYSTEM_PROMPT,
+            protected.masked,
+            preserve_markers_in_response=False,
+        )
     except _EmptyModelResponseError:
         return _judge_failure("EMPTY_RESPONSE")
     except Exception:

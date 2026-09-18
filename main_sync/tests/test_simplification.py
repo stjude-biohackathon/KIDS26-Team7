@@ -18,6 +18,10 @@ class SimplificationTests(unittest.TestCase):
             text=kwargs['messages'][1]['content']
             self.assertNotIn('5 mg',text)
             self.assertIn('5.0',kwargs['messages'][0]['content'])
+            self.assertIn(
+                'Preserve every distinct [[CLEAR_...]] marker',
+                kwargs['messages'][0]['content'],
+            )
             return MagicMock(choices=[MagicMock(message=MagicMock(content=text.replace('Administer','Give')))])
         client.chat.completions.create.side_effect=reply
         result=simplify_to_plain_language(client,'test','Administer 5 mg.',orders())

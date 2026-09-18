@@ -134,6 +134,30 @@ class LiveLlmCallTests(unittest.TestCase):
         self.assertIsNone(result.failure_category)
         self.assertEqual(result.explanation, "Looks fine.")
 
+    def test_judge_compares_masked_values_without_being_told_to_echo_markers(self):
+        client = MagicMock()
+
+        def reply(**kwargs):
+            system_prompt = kwargs['messages'][0]['content']
+            user_content = kwargs['messages'][1]['content']
+            self.assertNotIn('5 mg', user_content)
+            self.assertIn('[[CLEAR_', user_content)
+            self.assertNotIn('Preserve every distinct [[CLEAR_...]] marker', system_prompt)
+            self.assertIn('Do not copy protected marker tokens', system_prompt)
+            payload = (
+                '{"overall_verdict":"PASS","factual_drift_detected":false,'
+                '"omitted_red_flags":[],"contradictory_advice":[],'
+                '"clinical_risk_score":0,"explanation":"All instructions match."}'
+            )
+            return MagicMock(choices=[MagicMock(message=MagicMock(content=payload))])
+
+        client.chat.completions.create.side_effect = reply
+        result = live_llm.judge_safety(
+            client, 'deploy', 'Give 5 mg.', 'Give 5 mg.', synthetic_orders()
+        )
+        self.assertEqual(result.overall_verdict, 'PASS')
+        self.assertIsNone(result.failure_category)
+
     def test_judge_safety_strips_code_fences(self):
         payload = '```json\n{"overall_verdict":"NEEDS_REVIEW","factual_drift_detected":false,"omitted_red_flags":[],"contradictory_advice":[],"clinical_risk_score":0,"explanation":"ok"}\n```'
         client = self._mock_client(payload)
