@@ -250,10 +250,12 @@ class LivePipelineTests(unittest.TestCase):
             return MagicMock(choices=[MagicMock(message=MagicMock(content=text))])
         def back_or_judge(**kwargs):
             content = kwargs['messages'][1]['content']
-            self.assertNotIn('5 mg', content)
             if 'safety auditor' in kwargs['messages'][0]['content']:
+                self.assertIn('5 mg', content)
+                self.assertNotIn('[[CLEAR_', content)
                 text = judge_response or '{"overall_verdict":"PASS","factual_drift_detected":false,"omitted_red_flags":[],"contradictory_advice":[],"clinical_risk_score":0,"explanation":"Synthetic audit"}'
             else:
+                self.assertNotIn('5 mg', content)
                 text = content.removeprefix('ES: ')
             return MagicMock(choices=[MagicMock(message=MagicMock(content=text))])
         llm1.chat.completions.create.side_effect = forward

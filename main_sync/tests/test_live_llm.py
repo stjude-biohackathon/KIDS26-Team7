@@ -139,19 +139,21 @@ class LiveLlmCallTests(unittest.TestCase):
         self.assertIsNone(result.failure_category)
         self.assertEqual(result.explanation, "Looks fine.")
 
-    def test_judge_compares_masked_values_without_being_told_to_echo_markers(self):
+    def test_judge_compares_readable_text_without_marker_tags(self):
         client = MagicMock()
 
         def reply(**kwargs):
             system_prompt = kwargs['messages'][0]['content']
             user_content = kwargs['messages'][1]['content']
-            self.assertNotIn('5 mg', user_content)
-            self.assertIn('[[CLEAR_', user_content)
+            self.assertIn('5 mg', user_content)
+            self.assertNotIn('[[CLEAR_', user_content)
             self.assertNotIn('STRUCTURED ORDERS:', user_content)
             self.assertIn('ORIGINAL CLINICAL INSTRUCTIONS:', user_content)
-            self.assertNotIn('Preserve every distinct [[CLEAR_...]] marker', system_prompt)
-            self.assertIn('Do not copy protected marker tokens', system_prompt)
+            self.assertNotIn('protected marker', system_prompt.lower())
             self.assertIn('Evaluate semantic equivalence', system_prompt)
+            self.assertIn('reasonable clinician', system_prompt)
+            self.assertIn('labels, headings, or tags', system_prompt)
+            self.assertIn('Prefer PASS', system_prompt)
             self.assertIn('should receive PASS', system_prompt)
             self.assertNotIn('structured orders', system_prompt.lower())
             payload = (

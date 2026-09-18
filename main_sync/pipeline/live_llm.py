@@ -150,22 +150,20 @@ def judge_safety(
     """
     user_content = prompts.judge_user_content(original_text, simplified_en)
     try:
-        protected = ProtectedText(user_content)
-    except ProtectionError:
-        return _judge_failure("PROTECTED_MARKER_ERROR")
-
-    try:
         raw = _chat(
             client,
             deployment,
             prompts.SAFETY_JUDGE_SYSTEM_PROMPT,
-            protected.masked,
+            user_content,
             preserve_markers_in_response=False,
         )
     except _EmptyModelResponseError:
         return _judge_failure("EMPTY_RESPONSE")
     except Exception:
         return _judge_failure("REQUEST_FAILED")
+
+    if '[[CLEAR_' in raw.upper():
+        return _judge_failure("PROTECTED_MARKER_ERROR")
 
     try:
         # Models sometimes wrap JSON in a code fence despite instructions.
@@ -185,7 +183,6 @@ def judge_safety(
         for name in ("omitted_red_flags", "contradictory_advice"):
             if not isinstance(payload[name], list) or not all(isinstance(v, str) for v in payload[name]):
                 raise ValueError("Invalid finding list.")
-            payload[name] = [protected.restore(v, require_all=False) for v in payload[name]]
         score = payload["clinical_risk_score"]
         if type(score) not in (float, int) or not math.isfinite(score) or not 0 <= score <= 1:
             raise ValueError("Invalid risk score.")
@@ -195,10 +192,8 @@ def judge_safety(
             omitted_red_flags=list(payload.get("omitted_red_flags", [])),
             contradictory_advice=list(payload.get("contradictory_advice", [])),
             clinical_risk_score=float(payload.get("clinical_risk_score", 0.0)),
-            explanation=protected.restore(str(payload.get("explanation", "")), require_all=False),
+            explanation=str(payload.get("explanation", "")),
         )
-    except ProtectionError:
-        return _judge_failure("PROTECTED_MARKER_ERROR")
     except Exception:
         # Invalid values are intentionally reduced to a category. Exception
         # details and raw output may contain clinical text and are never stored.

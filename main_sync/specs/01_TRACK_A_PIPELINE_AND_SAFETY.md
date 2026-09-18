@@ -38,8 +38,8 @@ Participant 1 owns the multi-LLM generation, translation, and safety verificatio
 ### 2.3 LLM2 Safety Judge (`pipeline/orchestrator.py`)
 - **Prompt Architecture**:
   - Evaluates `simplified_en` against one authoritative `ORIGINAL CLINICAL INSTRUCTIONS` block: the exact composed source that LLM1 simplified. The judge does not receive a second structured-orders comparison block.
-  - Judges semantic equivalence rather than word, phrase, sentence-boundary, or formatting matches. Faithful plain-language paraphrases, split or combined sentences, headings, bullets, and deduplication pass when every instruction, fact, condition, exception, warning, action, urgency level, and clinical meaning remains. A definite clinical difference is flagged; genuinely ambiguous wording receives `NEEDS_REVIEW`.
-  - Receives masked protected values so matching tokens can be compared across source and simplified text, but does not reproduce marker tokens in its JSON audit response.
+  - Uses holistic semantic judgment rather than word, phrase, sentence-boundary, formatting, tag, heading, or one-to-one sentence matches. Faithful plain-language paraphrases, split or combined sentences, headings, bullets, folded prose, and deduplication pass when a reasonable clinician would find every instruction, fact, condition, exception, warning, action, urgency level, and clinical meaning still present. The prompt prefers `PASS` for stylistic differences with reasonably clear meaning. A definite clinical difference is flagged; only genuinely consequential ambiguity receives `NEEDS_REVIEW`.
+  - Receives readable source and simplified instructions without protected-marker tags. Deterministic protection and verbatim checks independently enforce exact clinical values; the judge focuses on meaning and relationships.
   - JSON output schema:
     ```json
     {
@@ -84,8 +84,8 @@ No matching value/warning means the requested injection fails explicitly. Packet
 - Fresh English rechecks require each distinct numeric value at least once from composed source/orders, including source-only values. Unresolved placeholders block approval. A repaired draft creates a new revision; successful checks clear failures only on that revision. Approval, approved PDF export, and approved library saving reject unresolved protection failures.
 - Configuration/transport failures without a usable response still fail explicitly. FKGL-only retries retain the three-attempt limit. Readability, protection, and judge failures with a usable simplification all return the available `PENDING`, not-for-patient-use draft. They never bypass their approval or export gates.
 
-- Simplification/translation/back-translation inputs mask numeric values and associated units before model calls. Restoration requires each distinct source sentinel at least once, with exact value restoration, and rejects invented numbers. Repetition counts need not match. This presence check never authorizes adding, changing, or omitting instructions; the judge still audits each instruction and its value associations.
-- Judge inputs are masked too; complete typed audit fields are required. Invalid, incomplete, or unavailable audits yield `FLAGGED_FOR_REVIEW`.
+- Simplification/translation/back-translation inputs mask numeric values and associated units before model calls. Restoration requires each distinct source sentinel at least once, with exact value restoration, and rejects invented numbers. Repetition counts need not match. This presence check never authorizes adding, changing, or omitting instructions; the judge still audits overall meaning and value associations.
+- Judge inputs use restored readable text without sentinel tags. Complete typed audit fields are required. Invalid, incomplete, or unavailable audits yield `FLAGGED_FOR_REVIEW`.
 - Required values must survive in English and, when requested, Spanish and back-translation. Additional unsupplied doses/thresholds/phone numbers and out-of-range FKGL block approval even if the judge says PASS. Warnings may be rephrased; the judge checks their meaning and reported omissions or contradictions block approval regardless of verdict.
 - These conservative checks do not certify clinical meaning. Authorized Spanish review remains a separate per-revision human attestation.
 
