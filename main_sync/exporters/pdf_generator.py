@@ -52,6 +52,57 @@ def _ordered_language_sections(packet: InstructionPacket) -> list[tuple[str, str
     return [("ENGLISH", packet.simplified_en)]
 
 
+# Section titles arrive as "=== HOME CARE ===" scaffolding. They are rendered
+# as coloured ribbons instead: presentation only, wording is never changed.
+_SECTION_HEADING_RE = re.compile(r"^\s*={2,}\s*(.+?)\s*={2,}\s*$")
+
+_RIBBON_FILL = colors.Color(0, 0.72, 0.82, alpha=0.18)
+_RIBBON_ACCENT = colors.Color(0, 0.52, 0.62, alpha=0.75)
+_RIBBON_TEXT = colors.HexColor("#08424C")
+
+
+def _split_into_blocks(text: str) -> list[tuple[str, str]]:
+    """Split body text into ('heading'|'body', text) chunks in source order."""
+    blocks: list[tuple[str, str]] = []
+    body: list[str] = []
+
+    def flush() -> None:
+        while body and not body[-1].strip():
+            body.pop()
+        if body:
+            blocks.append(("body", "\n".join(body)))
+        body.clear()
+
+    for line in text.splitlines():
+        match = _SECTION_HEADING_RE.match(line)
+        if match:
+            flush()
+            blocks.append(("heading", match.group(1)))
+        else:
+            if not line.strip() and not body:
+                continue
+            body.append(line)
+    flush()
+    return blocks
+
+
+def _ribbon(html_text: str, style: ParagraphStyle, width: float, *, accent: bool) -> Table:
+    """Render one heading as a light cyan ribbon spanning the text column."""
+    table = Table([[Paragraph(html_text, style)]], colWidths=[width], splitInRow=1)
+    commands = [
+        ("BACKGROUND", (0, 0), (-1, -1), _RIBBON_FILL),
+        ("LINEBEFORE", (0, 0), (-1, -1), 3, _RIBBON_ACCENT),
+        ("TOPPADDING", (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ("LEFTPADDING", (0, 0), (-1, -1), 9),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 9),
+    ]
+    if accent:
+        commands.append(("LINEBELOW", (0, 0), (-1, -1), 1, _RIBBON_ACCENT))
+    table.setStyle(TableStyle(commands))
+    return table
+
+
 def create_bilingual_pdf(packet: InstructionPacket) -> bytes:
     """
     Renders a full-width English or sequential Spanish-first bilingual pediatric
@@ -98,6 +149,22 @@ def create_bilingual_pdf(packet: InstructionPacket) -> bytes:
         fontSize=8.5,
         leading=12,
         textColor=colors.HexColor("#1A202C"),
+    )
+    language_ribbon_style = ParagraphStyle(
+        "LanguageRibbon",
+        parent=styles["Normal"],
+        fontSize=11,
+        leading=14,
+        fontName="Helvetica-Bold",
+        textColor=_RIBBON_TEXT,
+    )
+    section_ribbon_style = ParagraphStyle(
+        "SectionRibbon",
+        parent=styles["Normal"],
+        fontSize=9.5,
+        leading=12.5,
+        fontName="Helvetica-Bold",
+        textColor=_RIBBON_TEXT,
     )
     footer_style = ParagraphStyle(
         "FooterText",
@@ -174,9 +241,17 @@ def create_bilingual_pdf(packet: InstructionPacket) -> bytes:
     for index, (heading, text) in enumerate(sections):
         if index:
             elements.append(PageBreak())
-        elements.append(Paragraph(f"<b>{heading}</b>", cell_style))
-        elements.append(Spacer(1, 6))
-        elements.append(Paragraph(_format_for_reportlab(text, values), cell_style))
+        elements.append(_ribbon(escape(heading), language_ribbon_style, doc.width, accent=True))
+        elements.append(Spacer(1, 8))
+        for kind, chunk in _split_into_blocks(text):
+            if kind == "heading":
+                elements.append(Spacer(1, 4))
+                elements.append(
+                    _ribbon(escape(chunk), section_ribbon_style, doc.width, accent=False)
+                )
+                elements.append(Spacer(1, 5))
+            else:
+                elements.append(Paragraph(_format_for_reportlab(chunk, values), cell_style))
     elements.append(Spacer(1, 12))
 
     # Audit Sign-Off Footer
