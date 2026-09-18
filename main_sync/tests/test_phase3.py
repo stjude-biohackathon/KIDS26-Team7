@@ -148,7 +148,7 @@ def phase3_app():
         return MagicMock(choices=[MagicMock(message=MagicMock(content=text))])
     client.chat.completions.create.side_effect=reply
     st.cache_data.clear()
-    with patch('pipeline.evaluator.textstat.flesch_kincaid_grade',return_value=5.8), patch('streamlit.secrets',{}), patch('storage.github_loader.fetch_remote_templates_and_orders',side_effect=load_mock_templates_and_orders), patch('storage.github_loader.get_last_load_status',return_value={'source':'mock','error':None,'warnings':[]}), patch('pipeline.orchestrator.get_client',return_value=(client,'synthetic')), patch('requests.sessions.Session.request',side_effect=AssertionError('No network')):
+    with patch('pipeline.evaluator.textstat.flesch_kincaid_grade',return_value=5.8), patch('streamlit.secrets',{}), patch('storage.github_loader.fetch_remote_templates_and_orders',side_effect=load_mock_templates_and_orders), patch('storage.github_loader.get_last_load_status',return_value={'source':'github_app','error':None,'warnings':[]}), patch('pipeline.orchestrator.get_client',return_value=(client,'synthetic')), patch('requests.sessions.Session.request',side_effect=AssertionError('No network')):
         yield client
     st.cache_data.clear()
 

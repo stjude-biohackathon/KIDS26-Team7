@@ -296,6 +296,18 @@ class UpstreamSchemaAdapterTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             github_loader.adapt_modules({"version": "v1.2.0", "instructions": []})
 
+    def test_adapt_modules_rejects_incomplete_instruction_instead_of_omitting_it(self):
+        payload = self._modules_payload()
+        payload["instructions"].append({
+            "id": "SC-INCOMPLETE",
+            "category": "sickle_cell_pain",
+            "type": "when_to_call_your_care_team",
+            "instruction_text": "",
+        })
+
+        with self.assertRaisesRegex(ValueError, "instruction at index"):
+            github_loader.adapt_modules(payload)
+
     def test_adapt_orders_maps_upstream_fields(self):
         orders = github_loader.adapt_orders(self._orders_payload())
         order = orders["sickle_cell_pain"]
@@ -314,6 +326,28 @@ class UpstreamSchemaAdapterTests(unittest.TestCase):
         self.assertEqual(order.medications[0].name, "Ibuprofen (Advil/Motrin)")
         self.assertEqual(order.medications[0].dose, "280 mg")
         self.assertEqual(order.medications[0].frequency, "every 6 hours as needed")
+
+    def test_adapt_orders_does_not_inject_values_missing_from_upstream(self):
+        payload = {
+            "version": "v1.2.0",
+            "synthetic_orders": [{
+                "order_id": "ORD-SOURCE-ONLY",
+                "version": "v1.2.0",
+                "category": "sickle_cell_pain",
+                "diagnosis": "Sickle Cell Disease",
+                "patient_synthetic_id": "SYN-SOURCE-ONLY",
+                "medications": [{"name": "Source medicine", "dose": "5 mg"}],
+            }],
+        }
+
+        order = github_loader.adapt_orders(payload)["sickle_cell_pain"]
+
+        self.assertEqual(order.medications[0].route, "")
+        self.assertEqual(order.urgent_fever_threshold, "")
+        self.assertEqual(order.emergency_fever_threshold, "")
+        self.assertEqual(order.daytime_phone, "")
+        self.assertEqual(order.after_hours_phone, "")
+        self.assertEqual(order.emergency_phone, "")
 
     def test_merge_order_safety_sections_preserves_hydration_and_red_flags(self):
         modules = github_loader.adapt_modules(self._modules_payload())

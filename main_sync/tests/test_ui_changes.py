@@ -6,7 +6,7 @@ from tests.test_phase3 import phase3_app, click
 from tests import test_phase3
 from tests.test_simplification import orders
 from pipeline.orchestrator import PipelineOrchestrator
-from schemas.instruction_packet import InstructionPacket, SafetyJudgeResult
+from schemas.instruction_packet import ClinicalOrders, InstructionPacket, SafetyJudgeResult
 
 
 class OptionalTranslationTests(unittest.TestCase):
@@ -128,8 +128,60 @@ class UiChangesTests(unittest.TestCase):
         source = (Path(__file__).parents[1] / 'app' / 'clinician_ui.py').read_text()
         self.assertIn('st.container(key="generation_controls")', source)
         self.assertIn('.st-key-generation_controls', source)
-        self.assertNotIn('st.spinner(', source)
+        self.assertIn('with st.spinner(', source)
         self.assertIn('[data-testid="stStatusWidget"]', source)
+        self.assertNotIn('[data-testid="stSpinner"]', source)
+        self.assertLess(
+            source.index('_compose_original_preview_html(active_orders'),
+            source.index('if generate_clicked:'),
+        )
+
+    def test_team7_instruction_is_the_original_source_before_and_after_generation(self):
+        from tests.test_ui_components import offline_app
+
+        statement = (
+            "If your child has a temperature of 100.4°F or higher, "
+            "call the care team right away."
+        )
+        modules = {"sickle_cell_pain": {"team7-current": statement}}
+        source_orders = {
+            "sickle_cell_pain": ClinicalOrders(
+                patient_id="SYN-TEAM7",
+                diagnosis="Sickle Cell Disease",
+                order_id="ORD-TEAM7",
+                order_version="team7-current",
+                urgent_fever_threshold="100.4°F",
+                emergency_fever_threshold="",
+                emergency_phone="",
+            )
+        }
+
+        with offline_app(modules=modules, orders=source_orders):
+            at = self.app()
+            preview = next(
+                item.value for item in at.markdown
+                if "<div class='clinical-orders-preview'>" in item.value
+            )
+            self.assertIn(statement, preview)
+            click(at, 'Generate Simplified Instructions')
+            self.assertEqual(
+                at.session_state['current_packet'].original_clinical_text,
+                statement,
+            )
+            self.assertTrue(any(statement in item.value for item in at.markdown))
+
+    def test_non_github_source_is_blocked_even_without_error_detail(self):
+        from tests.test_ui_components import offline_app
+
+        with offline_app(load_status={
+            "source": "mock", "error": None, "warnings": []
+        }):
+            at = self.app()
+
+        self.assertFalse(any(
+            button.label == "Generate Simplified Instructions" for button in at.button
+        ))
+        self.assertTrue(any("Team7" in item.value for item in at.error))
 
     def test_library_table_stays_concise(self):
         with phase3_app():

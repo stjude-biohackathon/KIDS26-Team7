@@ -392,12 +392,15 @@ def adapt_modules(raw: Dict[str, Any]) -> Dict[str, Dict[str, str]]:
     declared_lookup = set(declared_sections)
 
     grouped: Dict[str, Dict[str, List[str]]] = {}
-    for item in instructions:
+    for index, item in enumerate(instructions):
         category = item.get("category")
         text = item.get("instruction_text")
-        if not category or not text:
-            continue
-        item_type = item.get("type", "")
+        item_type = item.get("type") or "instructions"
+        if not category or not isinstance(text, str) or not text.strip():
+            raise ValueError(
+                f"Upstream modules instruction at index {index} is missing "
+                "category or instruction_text."
+            )
         section = (
             item_type if item_type in declared_lookup
             else _TYPE_TO_DECLARED_SECTION.get(item_type, item_type)
@@ -464,7 +467,7 @@ def adapt_orders(raw: Dict[str, Any]) -> Dict[str, ClinicalOrders]:
             MedicationOrder(
                 name=med.get("name", ""),
                 dose=med.get("dose", ""),
-                route=med.get("route") or "oral",
+                route=med.get("route") or "",
                 frequency=med.get("frequency", ""),
                 special_instructions=med.get("special_instructions", ""),
             )
@@ -475,10 +478,16 @@ def adapt_orders(raw: Dict[str, Any]) -> Dict[str, ClinicalOrders]:
             "diagnosis": record.get("diagnosis", ""),
             "medications": medications,
             "order_id": record.get("order_id", ""),
+            "order_version": record_version,
+            # Remote Team7 data is authoritative. Explicit blanks prevent
+            # canonical demo defaults from becoming clinical source content.
+            "urgent_fever_threshold": "",
+            "emergency_fever_threshold": "",
+            "daytime_phone": "",
+            "after_hours_phone": "",
+            "emergency_phone": "",
         }
-        if record_version:
-            fields["order_version"] = record_version
-        # Only supply present values so the schema's own defaults survive.
+        # Replace explicit blanks only with values that actually exist upstream.
         for target, source in optional_field_map:
             value = record.get(source)
             if value:

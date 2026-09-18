@@ -28,7 +28,7 @@ from app.mock_components import (
 
 
 @contextmanager
-def offline_app(load_status=None, modules=None):
+def offline_app(load_status=None, modules=None, orders=None):
     """Run the Streamlit app without touching the network.
 
     Unit tests must stay hermetic: once live credentials resolve, the app would
@@ -40,7 +40,7 @@ def offline_app(load_status=None, modules=None):
     from storage import github_loader
 
     mock_modules, mock_orders = github_loader.load_mock_templates_and_orders()
-    status = load_status or {"source": "mock", "error": None, "warnings": []}
+    status = load_status or {"source": "github_app", "error": None, "warnings": []}
 
     def _unavailable(*_args, **_kwargs):
         raise RuntimeError("Live model call disabled in unit tests.")
@@ -62,7 +62,10 @@ def offline_app(load_status=None, modules=None):
             patch.object(
                 github_loader,
                 "fetch_remote_templates_and_orders",
-                return_value=(mock_modules if modules is None else modules, mock_orders),
+                return_value=(
+                    mock_modules if modules is None else modules,
+                    mock_orders if orders is None else orders,
+                ),
             )
         )
         stack.enter_context(

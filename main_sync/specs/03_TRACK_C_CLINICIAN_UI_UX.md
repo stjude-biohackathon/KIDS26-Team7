@@ -28,7 +28,7 @@ Participant 3 owns the clinician-facing interface and review workflow:
 - **Protocol Refresh and Errors**:
   - Remove the In-Memory Data Stream section and provenance badge from the UI.
   - Keep the compact GitHub App Refresh button to clear the source cache and current review, then rerun.
-  - Loading errors block generation; show actionable errors and upstream data-quality notices without exposing secrets.
+  - Loading errors block generation; show actionable errors and upstream data-quality notices without exposing secrets. A mock or fallback load is also blocked even when it has no error detail: only a reported `github_app` result may supply original clinical instructions.
 - **Protocol Version Selectors**:
   - Protocol choices require matching loaded templates and orders; module versions come from available content, not hardcoded labels.
   - Order Set Version displays the actual loaded version and order ID. The current loader exposes one order set per condition. Historical labels without archived content are not offered.
@@ -36,18 +36,18 @@ Participant 3 owns the clinician-facing interface and review workflow:
 - **Clinical Orders Customization**:
   - Patient synthetic ID (shown as MRN), age, and the field labeled Module. Internal schema names remain compatible.
   - Medication expanders (Name, Dose, Frequency, Route, Special instructions), with an Add medication control that appends a blank medication row.
-  - Fever threshold inputs (`100.4°F` urgent, `101.0°F` emergency).
+  - Fever threshold inputs use the exact loaded Team7 values. Missing values stay blank; the UI does not supply default thresholds, routes, ages, or contact numbers.
   - Daytime clinic, 24/7 triage, and emergency contact numbers.
 - **Scenario C Drift Simulator Expander**:
   - Allows clinicians to test error detection by injecting simulated clinical contradictions, altered thresholds, or altered dosages.
 
 ### 2.2 Source Preview and Comparative Review
-The front page has reduced top padding and the title "Pediatric Discharge Instruction Review". Two patient-summary lines display the hardcoded prototype name John Doe and sex M with the active MRN and age, followed by a larger selected-module name. Generate Simplified Instructions and an unchecked `Generate Spanish` checkbox are centered together. A full-width scrollable source preview follows, with clear headings, labeled fields, indented medication cards, and readable spacing rather than raw delimiter headings. The top Streamlit status/loading decoration and generation spinner are hidden.
+The front page has reduced top padding and the title "Pediatric Discharge Instruction Review". Two patient-summary lines display the hardcoded prototype name John Doe and sex M with the active MRN and age, followed by a larger selected-module name. Generate Simplified Instructions and an unchecked `Generate Spanish` checkbox are centered together. A full-width scrollable source preview follows, with clear headings, labeled fields, indented medication cards, and readable spacing rather than raw delimiter headings. The top Streamlit status/loading decoration is hidden. During generation an in-page spinner is shown after the source preview, which remains on screen until the completed simplified packet replaces the front page.
 
 Generation replaces those controls with FKGL (one decimal), verbatim percentage (whole number), and judge verdict. Verbatim help lists only missing safety tokens; correctly preserved tokens are not listed. New Generation returns to the preview. No viewport slider is shown. Original clinical orders and the label-free simplified-English editor start at equal width and height; the original pane has a horizontal resize handle that gives its remaining width to the editor. When Spanish is requested, Spanish and back-translated English appear as a second equal-width row.
 
 1. **Original Clinical Orders & Instructions (Col 1)**:
-   - Displays raw, unsimplified clinical-grade instruction modules combined with personalized physician orders.
+   - Displays the complete, unsimplified Team7 module wording combined with Team7 synthetic orders. Every source instruction remains present verbatim; formatting may add visual headings and spacing but cannot rewrite, omit, or supplement clinical information. The same source renderer is used before and after generation.
 2. **Simplified English Handout (Col 2)**:
    - Displays LLM1 simplified English with restored order values (required FKGL 5.0–6.9). Live generation allows three attempts. If readability, protected values, or the safety judge fails, the simplified draft remains visible with its failure reason and a not-for-patient-use warning. Clinician edits must pass fresh checks before approval.
    - Telemetry badges: FKGL score, verbatim lock status (matches/mismatches), and Safety Judge verdict.

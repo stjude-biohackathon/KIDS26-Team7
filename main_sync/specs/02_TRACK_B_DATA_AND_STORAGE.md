@@ -48,8 +48,13 @@ Participant 2 owns the data lifecycle, security compliance, persistence, and pri
   3. Exchange JWT for installation access token (`POST https://api.github.com/app/installations/{id}/access_tokens`).
   4. Cache installation token in-memory for 50 minutes.
   5. Fetch file content via REST API (`GET https://api.github.com/repos/{repo}/contents/{path}`) with header `Authorization: token {token}`.
-  6. Decode base64 payload directly in-memory using `json.loads` or `ast.literal_eval`.
+  6. Decode base64 payload directly in memory and parse with `json.loads`; if the known upstream trailing-comma defect is encountered, retry once with only trailing commas removed and surface a data-quality warning.
   7. **Strict Privacy Rule**: Never save or cache fetched data files to the local file system.
+- **Source-of-Truth Contract**:
+  - `stjude-biohackathon/team7-data` module `instruction_text` and synthetic-order fields are the sole clinical source used to build original instructions.
+  - Preserve every usable `instruction_text` value verbatim and in the declared section order. Reject an instruction record that lacks a category or non-empty `instruction_text`; never silently omit it.
+  - Preserve Team7 `hydration_order` and `red_flag_symptoms` text when composing the selected module.
+  - Missing medication, threshold, or contact fields remain blank. Canonical model defaults and UI demo values must never be substituted into remotely loaded Team7 records.
 
 ### 2.3 Session Review Library (`storage/gold_library.py`)
 - `ReviewLibrary` is owned by one Streamlit session; no module-global clinical store or disk persistence.

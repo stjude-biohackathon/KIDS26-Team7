@@ -356,8 +356,7 @@ st.markdown(
         display: none !important;
     }
     [data-testid="stStatusWidget"],
-    [data-testid="stDecoration"],
-    [data-testid="stSpinner"] {
+    [data-testid="stDecoration"] {
         display: none !important;
     }
     </style>
@@ -476,6 +475,14 @@ with st.sidebar:
         _load_templates_and_orders.clear()
         st.session_state["review_inputs"] = None
         st.rerun()
+    if load_status.get("source") != "github_app":
+        reason = load_status.get("error")
+        st.error(
+            "Team7 GitHub data was not loaded. Original clinical instructions "
+            "cannot be built from bundled or fallback content."
+            + (f" {reason}" if reason else "")
+        )
+        st.stop()
     if load_status.get("error"):
         st.error("Clinical data loading failed. " + load_status["error"])
         st.stop()
@@ -516,13 +523,13 @@ with st.sidebar:
     st.divider()
     st.subheader("4. Clinical Orders Customization")
 
-    # Load base order for the selected condition (live-fetched or mock fallback)
+    # Load the selected order from the verified Team7 GitHub result.
     # The loader currently exposes one actual order set per condition.
     # Do not offer invented historical versions or substitute another condition.
     order_widget_key = hashlib.sha256(base_order.model_dump_json().encode()).hexdigest()
     
     patient_id = st.text_input("MRN:", value=base_order.patient_id, key=f"patient_id_{condition}_{order_widget_key}")
-    age = st.text_input("Patient Age:", value=base_order.age or "8 years old", key=f"age_{condition}_{order_widget_key}")
+    age = st.text_input("Patient Age:", value=base_order.age or "", key=f"age_{condition}_{order_widget_key}")
     diagnosis = st.text_input("Diagnosis:", value=base_order.diagnosis, key=f"diagnosis_{condition}_{order_widget_key}")
 
     # Dynamic Medications
@@ -567,25 +574,25 @@ with st.sidebar:
     with col_t1:
         fever_urg = st.text_input(
             "Urgent Fever:", key=f"urgent_{condition}_{order_widget_key}",
-            value=base_order.urgent_fever_threshold or "100.4°F",
+            value=base_order.urgent_fever_threshold or "",
         )
     with col_t2:
         fever_emg = st.text_input(
             "Emergency Fever:", key=f"emergency_{condition}_{order_widget_key}",
-            value=base_order.emergency_fever_threshold or "101.0°F",
+            value=base_order.emergency_fever_threshold or "",
         )
 
     daytime_phone = st.text_input(
         "Daytime Phone:", key=f"daytime_{condition}_{order_widget_key}",
-        value=base_order.daytime_phone or "901-595-3300",
+        value=base_order.daytime_phone or "",
     )
     after_hours_phone = st.text_input(
         "After-Hours Phone:", key=f"after_hours_{condition}_{order_widget_key}",
-        value=base_order.after_hours_phone or "901-595-3300",
+        value=base_order.after_hours_phone or "",
     )
     emergency_phone = st.text_input(
         "Emergency Phone:", key=f"emergency_phone_{condition}_{order_widget_key}",
-        value=base_order.emergency_phone or "911",
+        value=base_order.emergency_phone or "",
     )
 
     active_orders = ClinicalOrders(
@@ -621,9 +628,7 @@ MODULE_DISPLAY_NAMES = {
 
 def _run_generation(want_spanish: bool) -> None:
     """Run the pipeline for the current sidebar selections and store the result."""
-    # Keep generation visually still; results or actionable failures replace
-    # the controls when the request completes.
-    with st.container():
+    with st.spinner("Generating and checking simplified instructions..."):
         raw_template = live_templates[condition][module_version]
         live_checked = False
         live_failed = False
@@ -705,29 +710,6 @@ st.markdown(
 
 packet: Optional[InstructionPacket] = st.session_state.get("current_packet")
 
-def _compose_original_display(orders: ClinicalOrders, template_text: str, template_version: str) -> str:
-    text = (
-        f"=== CLINICAL ORDERS ===\n"
-        f"Patient MRN: {orders.patient_id} ({orders.age or 'N/A'})\n"
-        f"Module: {orders.diagnosis}\n\n"
-        f"MEDICATIONS:\n"
-    )
-    for med in orders.medications:
-        text += f"• {med.name}: {med.dose} {med.route} {med.frequency}\n  Note: {med.special_instructions}\n"
-    text += (
-        f"\nSAFETY LIMITS:\n"
-        f"• Urgent Fever: {orders.urgent_fever_threshold or ''}\n"
-        f"• Emergency Fever: {orders.emergency_fever_threshold or ''}\n\n"
-        f"CONTACTS:\n"
-        f"• Daytime Phone: {orders.daytime_phone or ''}\n"
-        f"• After-Hours Phone: {orders.after_hours_phone or ''}\n"
-        f"• Emergency Phone: {orders.emergency_phone or ''}\n\n"
-        f"=== PROTOCOL TEMPLATE ({template_version}) ===\n"
-        f"{template_text}"
-    )
-    return text
-
-
 def _compose_original_preview_html(
     orders: ClinicalOrders, template_text: str, template_version: str
 ) -> str:
@@ -748,10 +730,11 @@ def _compose_original_preview_html(
             if medication.special_instructions
             else ""
         )
+        detail_html = f"<div>{details}</div>" if details else ""
         medications.append(
             "<div class='medication-preview'>"
             f"<div class='medication-preview-title'>{escape(medication.name or 'Unnamed medication')}</div>"
-            f"<div>{details or 'Details not entered'}</div>"
+            f"{detail_html}"
             f"{instructions}</div>"
         )
     medication_html = "".join(medications) or (
@@ -783,21 +766,45 @@ def _compose_original_preview_html(
         else:
             protocol_rows.append(f"<div class='protocol-item'>{escape(line)}</div>")
     protocol_html = "".join(protocol_rows)
+    age_row = (
+        f"<div class='clinical-field-row'><strong>Age</strong><span>{escape(orders.age)}</span></div>"
+        if orders.age else ""
+    )
+    safety_rows = "".join(
+        f"<div class='clinical-field-row'><strong>{label}</strong><span>{escape(value)}</span></div>"
+        for label, value in (
+            ("Urgent fever", orders.urgent_fever_threshold),
+            ("Emergency fever", orders.emergency_fever_threshold),
+        )
+        if value
+    )
+    contact_rows = "".join(
+        f"<div class='clinical-field-row'><strong>{label}</strong><span>{escape(value)}</span></div>"
+        for label, value in (
+            ("Daytime phone", orders.daytime_phone),
+            ("After-hours phone", orders.after_hours_phone),
+            ("Emergency phone", orders.emergency_phone),
+        )
+        if value
+    )
+    safety_section = (
+        "<div class='clinical-section-title'>Safety Limits</div>" + safety_rows
+        if safety_rows else ""
+    )
+    contact_section = (
+        "<div class='clinical-section-title'>Contacts</div>" + contact_rows
+        if contact_rows else ""
+    )
     return (
         "<div class='clinical-orders-preview'>"
         "<div class='clinical-preview-title'>Clinical Orders</div>"
         f"<div class='clinical-field-row'><strong>MRN</strong><span>{escape(orders.patient_id)}</span></div>"
-        f"<div class='clinical-field-row'><strong>Age</strong><span>{escape(orders.age or 'N/A')}</span></div>"
+        f"{age_row}"
         f"<div class='clinical-field-row'><strong>Diagnosis</strong><span>{escape(orders.diagnosis)}</span></div>"
         "<div class='clinical-section-title'>Medications</div>"
         f"{medication_html}"
-        "<div class='clinical-section-title'>Safety Limits</div>"
-        f"<div class='clinical-field-row'><strong>Urgent fever</strong><span>{escape(orders.urgent_fever_threshold or 'Not entered')}</span></div>"
-        f"<div class='clinical-field-row'><strong>Emergency fever</strong><span>{escape(orders.emergency_fever_threshold or 'Not entered')}</span></div>"
-        "<div class='clinical-section-title'>Contacts</div>"
-        f"<div class='clinical-field-row'><strong>Daytime phone</strong><span>{escape(orders.daytime_phone or 'Not entered')}</span></div>"
-        f"<div class='clinical-field-row'><strong>After-hours phone</strong><span>{escape(orders.after_hours_phone or 'Not entered')}</span></div>"
-        f"<div class='clinical-field-row'><strong>Emergency phone</strong><span>{escape(orders.emergency_phone or 'Not entered')}</span></div>"
+        f"{safety_section}"
+        f"{contact_section}"
         "<div class='clinical-section-title'>Protocol Instructions "
         f"<span class='protocol-version'>{escape(template_version)}</span></div>"
         f"<div class='protocol-copy'>{protocol_html}</div>"
@@ -819,15 +826,16 @@ if packet is None:
                 key="chk_want_spanish",
                 help="Generate Spanish translation with an English back-translation for clinician verification.",
             )
-    if generate_clicked:
-        _run_generation(want_spanish)
-
     st.markdown(
         "<div class='clinical-box-full'>"
         f"{_compose_original_preview_html(active_orders, live_templates[condition][module_version], module_version)}"
         "</div>",
         unsafe_allow_html=True,
     )
+    if generate_clicked:
+        # Render the source first so it stays visible while the model and safety
+        # checks run. The page switches to review only after a packet is ready.
+        _run_generation(want_spanish)
 else:
     if packet.is_simulation:
         st.error("SYNTHETIC DRIFT SIMULATION — not for patient use. Review and reject this test instruction set.")
@@ -926,7 +934,7 @@ else:
     if st.session_state.get("edits_checked_banner", False):
         st.info("**Edits re-evaluated and checked.** Status remains `PENDING`. Click **'Approve & publish'** when ready to finalize.")
 
-    orig_text = _compose_original_display(
+    original_source_html = _compose_original_preview_html(
         packet.clinical_orders, packet.original_clinical_text, packet.module_version
     )
 
@@ -938,7 +946,10 @@ else:
         col1, col2 = st.columns(2)
         with col1:
             st.markdown("<div class='col-header'>Original Clinical Orders</div>", unsafe_allow_html=True)
-            st.markdown(f"<div class='clinical-box'>{escape(orig_text)}</div>", unsafe_allow_html=True)
+            st.markdown(
+                f"<div class='clinical-box'>{original_source_html}</div>",
+                unsafe_allow_html=True,
+            )
 
         with col2:
             st.markdown("<div class='col-header'>Simplified English (Clinical Editor)</div>", unsafe_allow_html=True)
