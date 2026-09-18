@@ -1,5 +1,6 @@
 """Acceptance coverage for uichanges.md and optional Spanish review."""
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 from tests.test_phase3 import phase3_app, click
 from tests import test_phase3
@@ -37,6 +38,21 @@ class OptionalTranslationTests(unittest.TestCase):
         self.assertNotIn('Packet ID', combined)
         self.assertIn('English Handout', combined)
 
+    def test_bilingual_pdf_orders_spanish_before_simplified_english(self):
+        from exporters.pdf_generator import _ordered_language_sections
+        packet = InstructionPacket(
+            packet_id='SYN-BILINGUAL', condition='test', clinical_orders=orders(),
+            simplified_en='Simplified English.', translated_es='Español.',
+            status='APPROVED',
+        )
+        sections = _ordered_language_sections(packet)
+        self.assertEqual([heading for heading, _ in sections], [
+            'ESPAÑOL (Instrucciones para la Familia)', 'ENGLISH',
+        ])
+        self.assertEqual([text for _, text in sections], [
+            'Español.', 'Simplified English.',
+        ])
+
 
 class UiChangesTests(unittest.TestCase):
     def app(self):
@@ -47,7 +63,9 @@ class UiChangesTests(unittest.TestCase):
             at = self.app()
             self.assertTrue(any(
                 'front-page-heading' in item.value and
-                'Bilingual Pediatric Discharge Instruction Review' in item.value
+                'Pediatric Discharge Instruction Review' in item.value and
+                'Patient Name:</strong> John Doe' in item.value and
+                'Sex:</strong> M' in item.value
                 for item in at.markdown
             ))
             self.assertFalse(at.checkbox(key='chk_want_spanish').value)
@@ -62,6 +80,28 @@ class UiChangesTests(unittest.TestCase):
             self.assertEqual(at.session_state['current_packet'].status, 'APPROVED')
             self.assertNotIn('attested to authorized Spanish', at.session_state['current_packet'].clinician_notes or '')
 
+    def test_requested_sidebar_labels_connection_status_and_hidden_chrome(self):
+        with phase3_app():
+            at = self.app()
+            self.assertEqual(at.checkbox(key='chk_want_spanish').label, 'Generate Spanish')
+            labels = [item.label for item in at.text_input]
+            self.assertIn('MRN:', labels)
+            self.assertIn('Diagnosis:', labels)
+            self.assertNotIn('Synthetic Patient ID:', labels)
+            self.assertNotIn('Module:', labels)
+            subheaders = [item.value for item in at.subheader]
+            self.assertIn('2. GitHub App', subheaders)
+            self.assertIn('3. Protocol & Module Version', subheaders)
+            self.assertIn('4. Clinical Orders Customization', subheaders)
+            self.assertIn('5. Scenario C Drift Simulator', subheaders)
+            self.assertTrue(any('github-status' in item.value for item in at.markdown))
+            self.assertFalse(any('LLM1 simplifies English' in item.value for item in at.caption))
+
+        source = (Path(__file__).parents[1] / 'app' / 'clinician_ui.py').read_text()
+        self.assertIn('[data-testid="stAppDeployButton"]', source)
+        self.assertIn('resize: horizontal', source)
+        self.assertIn('label_visibility="collapsed"', source)
+
     def test_order_change_discards_stale_review(self):
         with phase3_app():
             at = self.app(); click(at, 'Generate Simplified Instructions')
@@ -70,7 +110,7 @@ class UiChangesTests(unittest.TestCase):
             self.assertIsNone(at.session_state['checked_packet'])
             self.assertTrue(any('10 years old' in m.value for m in at.markdown))
 
-    def test_spanish_opt_in_renders_four_panes_and_requires_attestation(self):
+    def test_spanish_opt_in_renders_translation_review_and_requires_attestation(self):
         with phase3_app():
             at = self.app(); at.checkbox(key='chk_want_spanish').check().run()
             click(at, 'Generate Simplified Instructions')

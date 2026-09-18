@@ -123,7 +123,7 @@ class FailedDraftTests(unittest.TestCase):
             self.assertFalse(app.exception)
             self.assertEqual(app.text_area(key='txt_clinician_en').value, failed.simplified_en)
             self.assertIsNone(app.session_state['checked_packet'])
-            self.assertTrue(any('5 mg' in t.value for t in app.text))
+            self.assertTrue(any('failed-token-box' in m.value and '5 mg' in m.value for m in app.markdown))
             self.assertTrue(any('not for patient use' in e.value.lower() for e in app.error))
             self.assertEqual(next(m for m in app.metric if m.label=='Verbatim Score').value, 'FAILED')
             next(b for b in app.button if b.label == 'Approve & Publish').click().run()

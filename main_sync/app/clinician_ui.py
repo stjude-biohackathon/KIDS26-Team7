@@ -144,7 +144,7 @@ def _load_templates_and_orders():
 # Streamlit Page Configuration
 # ---------------------------------------------------------------------------
 st.set_page_config(
-    page_title="CLEAR — Clinician Review Dashboard",
+    page_title="Pediatric Discharge Instruction Review",
     page_icon="C",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -165,6 +165,15 @@ st.markdown(
     .front-page-heading h2 {
         margin-top: 0;
         padding-top: 0.25rem;
+    }
+    .patient-summary-line {
+        margin: 0.15rem 0;
+        line-height: 1.35;
+    }
+    .selected-module {
+        margin: 0.8rem 0 0;
+        font-size: 1.2rem;
+        font-weight: 650;
     }
     .reportview-container {
         background-color: #F8FAFC;
@@ -208,6 +217,7 @@ st.markdown(
         border-bottom: 2px solid #E2E8F0;
     }
     .clinical-box {
+        box-sizing: border-box;
         background-color: #FFFFFF;
         border: 1px solid #E2E8F0;
         border-radius: 6px;
@@ -228,6 +238,63 @@ st.markdown(
         height: 70vh;
         overflow-y: auto;
         white-space: pre-wrap;
+    }
+    .github-status {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.45rem;
+        min-height: 2.35rem;
+        font-weight: 650;
+        font-size: 0.9rem;
+    }
+    .github-status::before {
+        content: "";
+        width: 0.65rem;
+        height: 0.65rem;
+        border-radius: 50%;
+        background: #DC2626;
+    }
+    .github-status.connected::before {
+        background: #16A34A;
+    }
+    .failed-token-box {
+        border: 2px solid #DC2626;
+        border-radius: 6px;
+        background: #FEF2F2;
+        color: #7F1D1D;
+        padding: 0.75rem 1rem;
+        margin: 0.5rem 0 0.75rem;
+    }
+    .failed-token-box ul {
+        margin: 0.4rem 0 0 1.1rem;
+        padding: 0;
+    }
+    .st-key-english_review_split [data-testid="stHorizontalBlock"] {
+        gap: 0.75rem;
+        align-items: stretch;
+    }
+    .st-key-english_review_split [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:first-child {
+        position: relative;
+        resize: horizontal;
+        overflow: auto;
+        width: 50%;
+        min-width: 25%;
+        max-width: 75%;
+        flex: 0 0 auto !important;
+        border-right: 3px solid #CBD5E1;
+        padding-right: 0.65rem;
+    }
+    .st-key-english_review_split [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:last-child {
+        min-width: 25%;
+        width: auto !important;
+        flex: 1 1 0 !important;
+    }
+    .st-key-english_review_split textarea {
+        height: 65vh !important;
+        min-height: 65vh !important;
+    }
+    [data-testid="stAppDeployButton"], .stDeployButton {
+        display: none !important;
     }
     </style>
     """,
@@ -264,12 +331,13 @@ def reject_packet_dialog(packet: InstructionPacket):
     st.warning("You are rejecting this instruction set due to detected clinical drift or safety violation.")
     
     drift_category = st.selectbox(
-        "Drift Taxonomy Categorization *",
-        options=list(REJECTION_CATEGORIES),
+        "Drift Taxonomy Categorization (optional)",
+        options=[None, *REJECTION_CATEGORIES],
         index=0,
+        format_func=lambda value: "No category selected" if value is None else value,
     )
     explanation = st.text_area(
-        "Clinical Rationale / Notes for Audit Log *",
+        "Clinical Rationale / Notes for Audit Log (optional)",
         placeholder="Detail specific omissions, altered numbers, or dangerous phrasing observed...",
         height=120,
     )
@@ -277,10 +345,6 @@ def reject_packet_dialog(packet: InstructionPacket):
     col_sub, col_cancel = st.columns([1, 1])
     with col_sub:
         if st.button("Confirm Rejection", type="primary"):
-            if not explanation.strip():
-                st.error("Please provide an explanation for the audit log.")
-                return
-            
             try:
                 candidate = reject_revision(
                     packet, st.session_state.get("txt_clinician_en", packet.simplified_en),
@@ -311,7 +375,6 @@ with st.sidebar:
     st.title("CLEAR Controls")
     st.caption("Bilingual Pediatric Discharge Instruction Review")
 
-    st.caption("LLM1 simplifies English to FKGL 5.0–6.9. LLM2 checks safety. Spanish translation and English back-translation run only when requested for the family.")
     st.subheader("1. AI Model Selection")
     model_options = ["gpt52", "gpt4o", "gpt56luna", "kimik3", "copus5", "local1", "local2"]
     
@@ -329,18 +392,34 @@ with st.sidebar:
     )
 
     st.divider()
-    if st.button("Refresh Protocols", help="Reload source instructions and orders; clear the current review"):
+    st.subheader("2. GitHub App")
+    live_templates, live_orders, load_status = _load_templates_and_orders()
+    github_connected = load_status.get("source") == "github_app" and not load_status.get("error")
+    status_col, refresh_col = st.columns([1.35, 1])
+    with status_col:
+        state_class = "connected" if github_connected else "disconnected"
+        state_label = "Connected" if github_connected else "Not connected"
+        st.markdown(
+            f"<div class='github-status {state_class}'>{state_label}</div>",
+            unsafe_allow_html=True,
+        )
+    with refresh_col:
+        refresh_clicked = st.button(
+            "Refresh", help="Reload source instructions and orders; clear the current review",
+            width="stretch",
+        )
+    if refresh_clicked:
         _load_templates_and_orders.clear()
         st.session_state["review_inputs"] = None
         st.rerun()
-    live_templates, live_orders, load_status = _load_templates_and_orders()
     if load_status.get("error"):
         st.error("Clinical data loading failed. " + load_status["error"])
         st.stop()
     for warning in load_status.get("warnings", []):
         st.caption("Source data notice: " + warning)
 
-    st.subheader("2. Protocol & Module Version")
+    st.divider()
+    st.subheader("3. Protocol & Module Version")
     
     available_conditions = [
         name for name, versions in live_templates.items()
@@ -373,16 +452,16 @@ with st.sidebar:
     st.info(f"Active Protocol: `{condition}` | `{module_version}` | `{order_version}`")
 
     st.divider()
-    st.subheader("3. Clinical Orders Customization")
+    st.subheader("4. Clinical Orders Customization")
 
     # Load base order for the selected condition (live-fetched or mock fallback)
     # The loader currently exposes one actual order set per condition.
     # Do not offer invented historical versions or substitute another condition.
     order_widget_key = hashlib.sha256(base_order.model_dump_json().encode()).hexdigest()
     
-    patient_id = st.text_input("Synthetic Patient ID:", value=base_order.patient_id, key=f"patient_id_{condition}_{order_widget_key}")
+    patient_id = st.text_input("MRN:", value=base_order.patient_id, key=f"patient_id_{condition}_{order_widget_key}")
     age = st.text_input("Patient Age:", value=base_order.age or "8 years old", key=f"age_{condition}_{order_widget_key}")
-    diagnosis = st.text_input("Module:", value=base_order.diagnosis, key=f"diagnosis_{condition}_{order_widget_key}")
+    diagnosis = st.text_input("Diagnosis:", value=base_order.diagnosis, key=f"diagnosis_{condition}_{order_widget_key}")
 
     # Dynamic Medications
     with st.expander("Prescribed Medications", expanded=False):
@@ -444,7 +523,7 @@ with st.sidebar:
     )
 
     st.divider()
-    st.subheader("4. Scenario C Drift Simulator")
+    st.subheader("5. Scenario C Drift Simulator")
     with st.expander("Negative Safety Test Injections", expanded=False):
         drift_mode = st.selectbox(
             "Simulate Safety Failure:",
@@ -531,10 +610,12 @@ if st.session_state.get("review_inputs") != review_inputs:
 
 st.markdown(
     "<div class='front-page-heading'>"
-    "<h2>Bilingual Pediatric Discharge Instruction Review</h2>"
-    f"<p><strong>Patient MRN:</strong> {escape(active_orders.patient_id)} "
-    f"({escape(active_orders.age or 'N/A')})</p>"
-    f"<p><strong>Module:</strong> "
+    "<h2>Pediatric Discharge Instruction Review</h2>"
+    f"<p class='patient-summary-line'><strong>Patient Name:</strong> John Doe &nbsp; "
+    f"<strong>MRN:</strong> {escape(active_orders.patient_id)}</p>"
+    f"<p class='patient-summary-line'><strong>Age:</strong> {escape(active_orders.age or 'N/A')} &nbsp; "
+    "<strong>Sex:</strong> M</p>"
+    f"<p class='selected-module'><strong>Module:</strong> "
     f"{escape(MODULE_DISPLAY_NAMES.get(condition, condition))}</p>"
     "</div>",
     unsafe_allow_html=True,
@@ -576,9 +657,9 @@ if packet is None:
             generate_clicked = st.button("Generate Simplified Instructions", type="primary", width="stretch")
         with es_col:
             want_spanish = st.checkbox(
-                "Include Spanish translation (with English back-translation) for family",
+                "Generate Spanish",
                 key="chk_want_spanish",
-                help="When checked, the simplified English is translated to Spanish and back-translated for verification.",
+                help="Generate Spanish translation with an English back-translation for clinician verification.",
             )
     if generate_clicked:
         _run_generation(want_spanish)
@@ -655,9 +736,12 @@ else:
 
     if metrics.protection_failures:
         st.error("DRAFT — NOT FOR PATIENT USE. Protected values failed validation. Review the draft and failed safety tokens below; approval is blocked.")
-        st.markdown("**Failed safety tokens**")
-        for finding in metrics.protection_failures:
-            st.text(finding)
+        failed_items = "".join(f"<li>{escape(finding)}</li>" for finding in metrics.protection_failures)
+        st.markdown(
+            "<div class='failed-token-box'><strong>Failed safety tokens</strong>"
+            f"<ul>{failed_items}</ul></div>",
+            unsafe_allow_html=True,
+        )
         st.caption("Only intact markers were restored. Missing values were not inserted; unresolved markers require clinician correction. Requested translation, back-translation, and judging still run so every available draft can be reviewed.")
 
     if not 5.0 <= metrics.fkgl_score <= 6.9:
@@ -688,31 +772,28 @@ else:
     )
 
     # ------------------------------------------------------------------
-    # Comparative panes: 2 boxes (English-only) or 4 boxes (with Spanish)
-    # Fixed equal widths: 50% each in English-only mode, 25% with Spanish.
+    # The English review uses one shared horizontal layout. Resizing the first
+    # pane changes the space available to the second pane.
     # ------------------------------------------------------------------
-    if spanish_requested:
-        col1, col2, col3, col4 = st.columns(4)
-    else:
+    with st.container(key="english_review_split"):
         col1, col2 = st.columns(2)
-        col3 = col4 = None
+        with col1:
+            st.markdown("<div class='col-header'>Original Clinical Orders</div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='clinical-box'>{escape(orig_text)}</div>", unsafe_allow_html=True)
 
-    with col1:
-        st.markdown("<div class='col-header'>Original Clinical Orders</div>", unsafe_allow_html=True)
-        st.markdown(f"<div class='clinical-box'>{escape(orig_text)}</div>", unsafe_allow_html=True)
+        with col2:
+            st.markdown("<div class='col-header'>Simplified English (Clinical Editor)</div>", unsafe_allow_html=True)
+            # Invariant: Read directly from session state; never mutate key downstream.
+            st.text_area(
+                "Simplified English clinical editor",
+                key="txt_clinician_en",
+                height=520,
+                help="Edit plain-language text directly. Click 'Save and check edits' to re-verify.",
+                label_visibility="collapsed",
+            )
 
-    with col2:
-        st.markdown("<div class='col-header'>Simplified English (Clinician Edit)</div>", unsafe_allow_html=True)
-        # Interactive text area with two-way binding
-        # Invariant: Read directly from session state; never mutate key downstream
-        st.text_area(
-            "Inline Clinical Editor:",
-            key="txt_clinician_en",
-            height=420,
-            help="Edit plain-language text directly. Click 'Save and check edits' to re-verify.",
-        )
-
-    if col3 is not None:
+    if spanish_requested:
+        col3, col4 = st.columns(2)
         with col3:
             st.markdown("<div class='col-header'>Spanish Handout (LLM 1)</div>", unsafe_allow_html=True)
             st.markdown(f"<div class='clinical-box'>{escape(packet.translated_es)}</div>", unsafe_allow_html=True)

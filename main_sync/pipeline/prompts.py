@@ -16,6 +16,17 @@ from __future__ import annotations
 # ---------------------------------------------------------------------------
 # System prompts, one per pipeline stage
 # ---------------------------------------------------------------------------
+# SIMPLIFY_SYSTEM_PROMPT = (
+#     "Change the language, not the information. Preserve every instruction, fact, "
+#     "condition, exception, warning, and clinical value. "
+#     "Simplify the supplied clinical instructions into plain English for parents, "
+#     "targeting a measured Flesch-Kincaid Grade Level (FKGL) of 5.0–6.9. "
+#     "Use short sentences with one main idea per sentence. Use common, familiar words "
+#     "and direct, active instructions. Split long sentences and dense lists into clear "
+#     "steps. Keep each condition, exception, and warning with the action it controls. "
+#     "Do not summarize, omit, combine, or add information. Do not add new clinical "
+#     "advice. Return only the simplified instructions."
+# )
 SIMPLIFY_SYSTEM_PROMPT = (
     "Change the language, not the information. Preserve every instruction, fact, "
     "condition, exception, warning, and clinical value. "
@@ -24,7 +35,7 @@ SIMPLIFY_SYSTEM_PROMPT = (
     "Use short sentences with one main idea per sentence. Use common, familiar words "
     "and direct, active instructions. Split long sentences and dense lists into clear "
     "steps. Keep each condition, exception, and warning with the action it controls. "
-    "Do not summarize, omit, combine, or add information. Do not add new clinical "
+    "You are encouraged to shorten the instructions as long as no information/instructions is removed or added. Do not add new clinical "
     "advice. Return only the simplified instructions."
 )
 

@@ -11,7 +11,7 @@ Participant 2 owns the data lifecycle, security compliance, persistence, and pri
 1. **Canonical Schema Contract (`schemas/instruction_packet.py`)**: Defines shared data interfaces across all tracks.
 2. **In-Memory GitHub App Loader (`storage/github_loader.py`)**: Fetches clinical modules and orders on the fly from a private GitHub repo (`stjude-biohackathon/team7-data`) via GitHub App authentication with zero local copies on disk.
 3. **Versioned Library Persistence (`storage/gold_library.py`)**: Stores independent finalized review snapshots in session memory only.
-4. **Bilingual PDF Generator (`exporters/pdf_generator.py`)**: Renders full-width English or requested 2-column bilingual clinical discharge handouts with physician verification badges and protocol version tracking.
+4. **Bilingual PDF Generator (`exporters/pdf_generator.py`)**: Renders full-width English or requested sequential Spanish-first bilingual clinical discharge handouts with physician verification badges and protocol version tracking.
 
 ---
 
@@ -54,7 +54,7 @@ Participant 2 owns the data lifecycle, security compliance, persistence, and pri
 ### 2.3 Session Review Library (`storage/gold_library.py`)
 - `ReviewLibrary` is owned by one Streamlit session; no module-global clinical store or disk persistence.
 - `save_to_gold_library(packet, *, library=None)` stores a deep copy of a reviewed packet. Missing review metadata is filled on the saved copy, never on the caller.
-- Pending records and rejections without category/reason are refused. Repeated identical saves are idempotent; changed content under an existing ID is refused.
+- Pending records are refused. Rejection category and rationale are optional. Repeated identical saves are idempotent; changed content under an existing ID is refused.
 - `load_gold_records(*, library=None)` returns independent copies, preserving immutable review history. Revisions carry `parent_packet_id`.
 - Session reset/server restart loses history. Durable audit storage is not implemented. This supersedes the earlier JSONL specification to comply with AGENTS.md's no-local-data rule.
 
@@ -69,10 +69,8 @@ Participant 2 owns the data lifecycle, security compliance, persistence, and pri
     - Rejected: Light red background (`#FFF5F5`), red border (`#E53E3E`), text: "Rejected by physician" with rejection notice.
   - **Language-Aware Layout**:
     - English-only output uses one full-width column and an English Handout banner, with no blank Spanish column.
-    - Requested bilingual output uses two side-by-side columns. User-facing metadata says Patient MRN, Module, and Record ID.
-  - Long cells split across pages with repeated language headers; table widths fit the available page frame.
-    - Left column: English simplified instructions with bolded verbatim markers.
-    - Right column: Spanish translation.
+    - Requested bilingual output presents the full-width Spanish handout first, followed by the full-width simplified English source on the next page.
+  - Long language sections split safely across pages. Protected values are bolded in both languages.
   - **Audit Sign-off Footer**:
     - Includes `Module Ver`, `Order Set Ver`, physician signature line, and verification timestamp.
   - **Formatting Rule**: ReportLab paragraphs require `<font size="8.5">` instead of HTML `<span style="...">`.

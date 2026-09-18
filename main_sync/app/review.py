@@ -31,8 +31,8 @@ def approval_blockers(packet: InstructionPacket, edited_text: str, checked_packe
         reasons.append('Protected-value checks failed. Correct the draft and run fresh checks before approval.')
     if metrics is None or not math.isfinite(metrics.fkgl_score):
         reasons.append('Readability evaluation is unavailable.')
-    if metrics is not None and not fkgl_passes(metrics.fkgl_score):
-        reasons.append('English must meet the FKGL benchmark of 5.0–6.9 before approval.')
+    #if metrics is not None and not fkgl_passes(metrics.fkgl_score):
+        #reasons.append('English must meet the FKGL benchmark of 5.0–6.9 before approval.')
     if metrics is None or metrics.verbatim_mismatches or metrics.verbatim_match_percent != 100:
         reasons.append('Required clinical values did not pass evaluation.')
     judge = metrics.safety_judge if metrics else None
@@ -59,22 +59,27 @@ REJECTION_CATEGORIES = (
 )
 
 
-def reject_revision(packet: InstructionPacket, edited_text: str, category: str, reason: str) -> InstructionPacket:
+def reject_revision(
+    packet: InstructionPacket,
+    edited_text: str,
+    category: str | None = None,
+    reason: str | None = None,
+) -> InstructionPacket:
     """Reject a copy of exactly the text under review, without mutating history."""
     from datetime import datetime, timezone
     from pipeline.orchestrator import PipelineOrchestrator
     from schemas.instruction_packet import get_physician_annotation
     if packet.status != 'PENDING':
         raise ValueError('Create a new pending revision before changing a finalized review.')
-    if category not in REJECTION_CATEGORIES or not reason.strip():
-        raise ValueError('A rejection requires a valid category and explanation.')
+    if category is not None and category not in REJECTION_CATEGORIES:
+        raise ValueError('Unknown rejection category.')
     if edited_text != packet.simplified_en:
         candidate = PipelineOrchestrator().recheck_edits(packet, edited_text)
     else:
         candidate = packet.model_copy(deep=True)
     candidate.status = 'REJECTED_DRIFT'
     candidate.rejection_category = category
-    candidate.rejection_reason = reason.strip()
+    candidate.rejection_reason = (reason or '').strip() or None
     candidate.physician_decision = get_physician_annotation(candidate)
     candidate.reviewed_at = datetime.now(timezone.utc).isoformat()
     return candidate

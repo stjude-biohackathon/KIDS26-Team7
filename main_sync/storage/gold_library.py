@@ -15,10 +15,6 @@ class ReviewLibrary:
             raise ValueError('Protected-value failures must be resolved before publishing.')
         if packet.status not in {'APPROVED', 'EDITED_AND_APPROVED', 'REJECTED_DRIFT'}:
             raise ValueError('Only reviewed packets can be saved.')
-        if packet.status == 'REJECTED_DRIFT' and not (
-            packet.rejection_category and packet.rejection_reason and packet.rejection_reason.strip()
-        ):
-            raise ValueError('A rejection requires a category and explanation.')
         value = packet.model_dump_json()
         if packet.packet_id in self._records:
             if value in (self._inputs[packet.packet_id], self._records[packet.packet_id].model_dump_json()):

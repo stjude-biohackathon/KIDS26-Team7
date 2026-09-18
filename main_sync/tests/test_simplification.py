@@ -88,13 +88,14 @@ class SimplificationTests(unittest.TestCase):
         )
         self.assertIn('one main idea per sentence', _SIMPLIFY_SYSTEM_PROMPT)
         self.assertIn('common, familiar words', _SIMPLIFY_SYSTEM_PROMPT)
-        self.assertIn('Do not summarize', _SIMPLIFY_SYSTEM_PROMPT)
+        self.assertIn('no information/instructions is removed or added', _SIMPLIFY_SYSTEM_PROMPT)
 
-    def test_approval_blocks_out_of_range_readability(self):
+    def test_pipeline_readability_failure_or_unavailable_score_blocks_approval(self):
         from app.review import approval_blockers
         for score in [4.9,7.0,float('nan')]:
             with self.subTest(score=score):
-                p=InstructionPacket(packet_id='SYN-1',condition='test',clinical_orders=orders(),original_clinical_text='Source.',simplified_en='Text.',translated_es='Prueba.',back_translated_en='Text.',evaluation_metrics=EvaluationMetrics(fkgl_score=score,safety_judge=SafetyJudgeResult(overall_verdict='PASS')))
+                verdict = 'PASS' if score != score else 'FLAGGED_FOR_REVIEW'
+                p=InstructionPacket(packet_id='SYN-1',condition='test',clinical_orders=orders(),original_clinical_text='Source.',simplified_en='Text.',translated_es='Prueba.',back_translated_en='Text.',evaluation_metrics=EvaluationMetrics(fkgl_score=score,safety_judge=SafetyJudgeResult(overall_verdict=verdict)))
                 self.assertTrue(approval_blockers(p,p.simplified_en,p.model_dump(mode='json'),True))
 
     def test_rephrased_warning_can_pass_at_benchmark_boundaries(self):

@@ -39,12 +39,13 @@ class MemoryLibraryTests(unittest.TestCase):
         p.simplified_en = 'Overwrite'
         with self.assertRaises(ValueError): library.save(p)
 
-    def test_pending_or_unexplained_rejections_are_not_records(self):
+    def test_pending_is_not_a_record_but_rejection_notes_are_optional(self):
         from storage.gold_library import ReviewLibrary
         p=packet(); library=ReviewLibrary()
         with self.assertRaises(ValueError): library.save(p)
         p.status='REJECTED_DRIFT'
-        with self.assertRaises(ValueError): library.save(p)
+        library.save(p)
+        self.assertEqual(library.records()[0].status, 'REJECTED_DRIFT')
 
 class DriftTests(unittest.TestCase):
     def test_injections_are_actual_changes_detected_by_evaluation(self):
@@ -98,10 +99,13 @@ class ProtectedModelTests(unittest.TestCase):
             self.assertIn('Give 280 mg.',result.simplified_en)
 
 class RejectionTests(unittest.TestCase):
-    def test_rejection_requires_reason_and_preserves_original(self):
+    def test_rejection_metadata_is_optional_and_original_is_preserved(self):
         from app.review import reject_revision
         p=packet(); before=p.model_dump()
-        with self.assertRaises(ValueError): reject_revision(p,p.simplified_en,'Unsafe dosage alteration','  ')
+        without_notes=reject_revision(p,p.simplified_en,None,'  ')
+        self.assertEqual(without_notes.status,'REJECTED_DRIFT')
+        self.assertIsNone(without_notes.rejection_category)
+        self.assertIsNone(without_notes.rejection_reason)
         rejected=reject_revision(p,p.simplified_en+' Changed.','Unsafe dosage alteration','Synthetic test finding')
         self.assertEqual(p.model_dump(),before)
         self.assertEqual(rejected.status,'REJECTED_DRIFT')
@@ -188,12 +192,10 @@ class Phase3WorkflowTests(unittest.TestCase):
                 click(at,'Generate Simplified Instructions')
                 click(at,'Reject & Log Drift')
                 click(at,'Confirm Rejection')
-                self.assertEqual(len(at.session_state['review_library'].records()),2)
-                next(t for t in at.text_area if 'Clinical Rationale' in t.label).input('Synthetic audit finding.').run()
-                click(at,'Confirm Rejection')
                 self.assertEqual(len(at.exception),0)
                 self.assertEqual(at.session_state['current_packet'].status,'REJECTED_DRIFT')
                 self.assertEqual(len(at.session_state['review_library'].records()),3)
+                self.assertIsNone(at.session_state['current_packet'].rejection_reason)
                 self.assertTrue(at.session_state['pdf_bytes'].startswith(b'%PDF'))
 
     def test_each_scenario_runs_offline_and_cannot_be_approved(self):
@@ -272,7 +274,6 @@ class WorkflowFailureTests(unittest.TestCase):
     def test_rejection_export_failure_preserves_pending_packet(self):
         with phase3_app(), patch('exporters.pdf_generator.create_bilingual_pdf',side_effect=RuntimeError('Synthetic export failure')):
             at=self.app(); click(at,'Generate Simplified Instructions'); click(at,'Reject & Log Drift')
-            next(t for t in at.text_area if 'Clinical Rationale' in t.label).input('Synthetic finding').run()
             click(at,'Confirm Rejection')
             self.assertEqual(len(at.exception),0)
             self.assertEqual(at.session_state['current_packet'].status,'PENDING')

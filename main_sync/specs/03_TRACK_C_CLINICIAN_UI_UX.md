@@ -27,7 +27,7 @@ Participant 3 owns the clinician-facing interface and review workflow:
   - LLM2 dropdown: Default `gpt4o`, options: `gpt52`, `gpt4o`, `gpt56luna`, `kimik3`, `copus5`, `local1`, `local2`.
 - **Protocol Refresh and Errors**:
   - Remove the In-Memory Data Stream section and provenance badge from the UI.
-  - Keep Refresh Protocols to clear the source cache and current review, then rerun.
+  - Keep the compact GitHub App Refresh button to clear the source cache and current review, then rerun.
   - Loading errors block generation; show actionable errors and upstream data-quality notices without exposing secrets.
 - **Protocol Version Selectors**:
   - Protocol choices require matching loaded templates and orders; module versions come from available content, not hardcoded labels.
@@ -42,9 +42,9 @@ Participant 3 owns the clinician-facing interface and review workflow:
   - Allows clinicians to test error detection by injecting simulated clinical contradictions, altered thresholds, or altered dosages.
 
 ### 2.2 Source Preview and Comparative Review
-The front page has reduced top padding and the title "Bilingual Pediatric Discharge Instruction Review", then patient MRN with age, and the selected module name. The module updates immediately from the sidebar. Generate Simplified Instructions and an unchecked Spanish translation checkbox appear together, followed by a full-width scrollable original-instructions box.
+The front page has reduced top padding and the title "Pediatric Discharge Instruction Review". Two patient-summary lines display the hardcoded prototype name John Doe and sex M with the active MRN and age, followed by a larger selected-module name. Generate Simplified Instructions and an unchecked `Generate Spanish` checkbox appear together, followed by a full-width scrollable original-instructions box.
 
-Generation replaces those controls with FKGL (one decimal), verbatim percentage (whole number), and judge verdict. Verbatim help lists only missing safety tokens; correctly preserved tokens are not listed. New Generation returns to the preview. No viewport slider is shown. The English-only panes are fixed at equal 50% widths; the four Spanish-review panes are fixed at equal 25% widths. Default review has two panes; Spanish opt-in has four:
+Generation replaces those controls with FKGL (one decimal), verbatim percentage (whole number), and judge verdict. Verbatim help lists only missing safety tokens; correctly preserved tokens are not listed. New Generation returns to the preview. No viewport slider is shown. Original clinical orders and the label-free simplified-English editor start at equal width and height; the original pane has a horizontal resize handle that gives its remaining width to the editor. When Spanish is requested, Spanish and back-translated English appear as a second equal-width row.
 
 1. **Original Clinical Orders & Instructions (Col 1)**:
    - Displays raw, unsimplified clinical-grade instruction modules combined with personalized physician orders.
@@ -72,7 +72,7 @@ Generation replaces those controls with FKGL (one decimal), verbatim percentage 
   - `edits_checked_banner`: Boolean triggering re-evaluation success banner.
 
 ### 2.4 Action Footer & Review Governance
-- **Failed protected-value drafts**: Keep the English draft and all requested translation panes visible. Translation, back-translation, and judging continue after check failures and accumulate findings; they cannot override an earlier failure. Show a not-for-patient-use banner, stage-specific failed safety tokens, and a FAILED verbatim metric with detailed help. Missing values are not auto-filled; corrupted markers are labeled unresolved. Clear approval eligibility and PDF downloads. Only a fresh passing revision can be published; rejection may still create a marked audit copy.
+- **Failed protected-value drafts**: Keep the English draft and all requested translation panes visible. Translation, back-translation, and judging continue after check failures and accumulate findings; they cannot override an earlier failure. Show a not-for-patient-use banner, stage-specific failed safety tokens inside a red-bordered box, and a FAILED verbatim metric with detailed help. Missing values are not auto-filled; corrupted markers are labeled unresolved. Clear approval eligibility and PDF downloads. Only a fresh passing revision can be published; rejection may still create a marked audit copy.
 - **Editor formatting**: Convert LLM Markdown to plain editable text before scoring and display. Remove headings, emphasis markers, code fences, link URLs, and HTML presentation tags while retaining the words, paragraph breaks, and normalized bullet structure.
 
 - **Button 1: "Save and check edits"**:
@@ -90,7 +90,7 @@ Generation replaces those controls with FKGL (one decimal), verbatim percentage 
   - Saves an independent record in the session-only review library; no clinical data is written to disk.
   - Unlocks PDF download button with "Approved by physician" or "Edited and approved by physician" banner.
 - **Button 3: "Reject & log drift"**:
-  - Opens modal dialog requiring drift taxonomy categorization:
+  - Opens a modal dialog with optional drift taxonomy categorization and optional clinical rationale. Available categories are:
     - `Unsafe dosage alteration`
     - `Altered return/fever threshold`
     - `Omitted critical red flag`

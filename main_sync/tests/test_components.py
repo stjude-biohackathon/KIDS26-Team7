@@ -206,6 +206,15 @@ class TestGoldLibraryStorage(unittest.TestCase):
         self.assertEqual(records[1].status, "REJECTED_DRIFT")
         self.assertEqual(records[1].rejection_reason, "Altered fever threshold")
 
+    def test_rejection_without_optional_notes_can_be_saved(self):
+        self.packet.status = "REJECTED_DRIFT"
+        self.packet.rejection_reason = None
+        self.packet.rejection_category = None
+        self.library.save(self.packet)
+        saved = self.library.records()[0]
+        self.assertEqual(saved.status, "REJECTED_DRIFT")
+        self.assertIsNone(saved.rejection_reason)
+
 
 class TestPdfGenerator(unittest.TestCase):
     def setUp(self):

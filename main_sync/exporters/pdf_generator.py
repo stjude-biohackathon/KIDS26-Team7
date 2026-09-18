@@ -1,6 +1,7 @@
 """
 Track B: English and bilingual PDF generator.
-ReportLab generator creating a full-width English or 2-column bilingual layout with physician verification status banner and audit footer.
+ReportLab generator creating full-width language sections with physician
+verification status banner and audit footer.
 Adheres strictly to specs/02_TRACK_B_DATA_AND_STORAGE.md.
 """
 
@@ -15,7 +16,7 @@ from typing import Optional
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
-from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from pipeline.evaluator import extract_verbatim_tokens
 
@@ -41,10 +42,20 @@ def _format_for_reportlab(text: str, protected_values=()) -> str:
     return "".join(parts).replace("\n", "<br/>")
 
 
+def _ordered_language_sections(packet: InstructionPacket) -> list[tuple[str, str]]:
+    """Return patient-facing sections in their required print order."""
+    if packet.translated_es.strip():
+        return [
+            ("ESPAÑOL (Instrucciones para la Familia)", packet.translated_es),
+            ("ENGLISH", packet.simplified_en),
+        ]
+    return [("ENGLISH", packet.simplified_en)]
+
+
 def create_bilingual_pdf(packet: InstructionPacket) -> bytes:
     """
-    Renders a full-width English or 2-column bilingual pediatric discharge handout
-    with physician verification banner, verbatim markers, and audit sign-off footer.
+    Renders a full-width English or sequential Spanish-first bilingual pediatric
+    discharge handout with physician verification and an audit sign-off footer.
     """
     if packet.status in {'APPROVED', 'EDITED_AND_APPROVED'} and packet.evaluation_metrics and packet.evaluation_metrics.protection_failures:
         raise ValueError('Protected-value failures must be resolved before publishing.')
@@ -156,34 +167,16 @@ def create_bilingual_pdf(packet: InstructionPacket) -> bytes:
     elements.append(Paragraph(patient_info, meta_style))
     elements.append(Spacer(1, 8))
 
-    # 2-Column Side-by-Side Grid
+    # Full-width language sections. Spanish is first when requested, followed
+    # by the simplified English source on the next page.
     values = extract_verbatim_tokens(packet.clinical_orders)
-    en_formatted = _format_for_reportlab(packet.simplified_en, values)
-    es_formatted = _format_for_reportlab(packet.translated_es, values)
-
-    col_en = Paragraph(en_formatted, cell_style)
-    col_es = Paragraph(es_formatted, cell_style)
-
-    # The frame adds 6pt padding on each side of doc.width. Split within
-    # long cells so a single paragraph can span pages without truncation.
-    header = [Paragraph("<b>ENGLISH</b>", cell_style)]
-    body = [col_en]
-    if bilingual:
-        header.append(Paragraph("<b>ESPAÑOL (Instrucciones para la Familia)</b>", cell_style))
-        body.append(col_es)
-    content_table = Table(
-        [header, body], colWidths=[(doc.width - 12) / len(header)] * len(header),
-        repeatRows=1, splitByRow=1, splitInRow=1,
-    )
-    content_table.setStyle(
-        TableStyle([
-            ("VALIGN", (0, 0), (-1, -1), "TOP"),
-            ("LEFTPADDING", (0, 0), (-1, -1), 6),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 6),
-            *([("LINEBEFORE", (1, 0), (1, -1), 1, colors.HexColor("#CBD5E0"))] if bilingual else []),
-        ])
-    )
-    elements.append(content_table)
+    sections = _ordered_language_sections(packet)
+    for index, (heading, text) in enumerate(sections):
+        if index:
+            elements.append(PageBreak())
+        elements.append(Paragraph(f"<b>{heading}</b>", cell_style))
+        elements.append(Spacer(1, 6))
+        elements.append(Paragraph(_format_for_reportlab(text, values), cell_style))
     elements.append(Spacer(1, 12))
 
     # Audit Sign-Off Footer
