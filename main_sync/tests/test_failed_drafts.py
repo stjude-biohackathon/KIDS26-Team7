@@ -44,11 +44,11 @@ class FailedDraftTests(unittest.TestCase):
                 self.assertTrue(any(stage in f and '5 mg' in f for f in metrics.protection_failures))
                 self.assertTrue(any('10 mg' in f for f in metrics.protection_failures))
                 self.assertEqual(metrics.safety_judge.overall_verdict, 'FLAGGED_FOR_REVIEW')
-                self.assertEqual(
-                    calls,
-                    ['English simplification', 'Spanish translation',
-                     'English back-translation', 'judge'],
-                )
+                expected = ['English simplification']
+                if stage == 'English simplification':
+                    expected *= 3
+                expected += ['Spanish translation', 'English back-translation', 'judge']
+                self.assertEqual(calls, expected)
                 self.assertIn('10 mg', getattr(packet, {'English simplification':'simplified_en','Spanish translation':'translated_es','English back-translation':'back_translated_en'}[stage]))
                 # A permissive judge/snapshot must not override deterministic failure.
                 metrics.safety_judge.overall_verdict = 'PASS'

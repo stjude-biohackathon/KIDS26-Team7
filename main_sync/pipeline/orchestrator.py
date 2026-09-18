@@ -241,19 +241,29 @@ class PipelineOrchestrator:
         llm1_client, llm1_deployment = get_client(self.llm1_model)
         source = compose_clinical_text(composite_template_text, saved_orders)
         previous_fkgl = None
+        previous_protection_failure = False
         # A bounded retry loop avoids hanging or publishing an unmeasured draft.
         for attempt in range(1, 4):
             english, failures = _reviewable_call("English simplification", lambda: live_llm.simplify_to_plain_language(
-                llm1_client, llm1_deployment, source, saved_orders, previous_fkgl=previous_fkgl,
+                llm1_client, llm1_deployment, source, saved_orders,
+                previous_fkgl=previous_fkgl,
+                previous_protection_failure=previous_protection_failure,
             ))
             metrics = evaluate_text(english, saved_orders)
             if not failures:
                 failures = [f"English simplification: {finding}" for finding in numeric_findings(source, english)]
             if failures:
-                break  # Keep the failed draft; do not translate or overwrite it with retries.
+                if attempt < 3:
+                    # Give LLM1 another chance to preserve every marker. The
+                    # final failed draft remains visible if all attempts fail.
+                    previous_fkgl = metrics.fkgl_score
+                    previous_protection_failure = True
+                    continue
+                break
             if fkgl_passes(metrics.fkgl_score):
                 break
             previous_fkgl = metrics.fkgl_score
+            previous_protection_failure = False
         # If all three attempts miss the readability target, keep the third
         # draft. The deterministic gate below marks it FLAGGED_FOR_REVIEW, and
         # approval remains blocked by the measured FKGL score.

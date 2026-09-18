@@ -20,7 +20,11 @@ _SIMPLIFY_SYSTEM_PROMPT = (
     "condition, exception, warning, and clinical value. "
     "Simplify the supplied clinical instructions into plain English for parents, "
     "targeting a measured Flesch-Kincaid Grade Level (FKGL) of 5.0–6.9. "
-    "Do not add new clinical advice. Return only the simplified instructions."
+    "Use short sentences with one main idea per sentence. Use common, familiar words "
+    "and direct, active instructions. Split long sentences and dense lists into clear "
+    "steps. Keep each condition, exception, and warning with the action it controls. "
+    "Do not summarize, omit, combine, or add information. Do not add new clinical "
+    "advice. Return only the simplified instructions."
 )
 
 _TRANSLATE_ES_SYSTEM_PROMPT = (
@@ -92,13 +96,36 @@ def format_orders(orders: ClinicalOrders) -> str:
     return "\n".join(lines)
 
 
-def simplify_to_plain_language(client, deployment: str, composite_template_text: str, orders: ClinicalOrders, *, previous_fkgl: float | None = None) -> str:
+def simplify_to_plain_language(
+    client,
+    deployment: str,
+    composite_template_text: str,
+    orders: ClinicalOrders,
+    *,
+    previous_fkgl: float | None = None,
+    previous_protection_failure: bool = False,
+) -> str:
     """LLM1: simplify existing wording without adding or changing instructions."""
     protected = ProtectedText(composite_template_text)
     prompt = _SIMPLIFY_SYSTEM_PROMPT
     if previous_fkgl is not None:
-        direction = "shorter sentences and simpler vocabulary" if previous_fkgl > 6.9 else "faithful sentence-boundary adjustments without adding words, explanations, or instructions"
-        prompt += f" A previous attempt scored FKGL {previous_fkgl:.2f}; use {direction} to reach 5.0–6.9. Preserve all information."
+        if previous_fkgl > 6.9:
+            prompt += (
+                f" A previous attempt scored FKGL {previous_fkgl:.2f}, which is too high. "
+                "Simplify more substantially: replace difficult words when meaning permits, "
+                "split long sentences, and keep one action or condition per sentence."
+            )
+        else:
+            prompt += (
+                f" A previous attempt scored FKGL {previous_fkgl:.2f}, below the target. "
+                "Keep the language plain and preserve all information while adjusting sentence "
+                "boundaries enough to reach 5.0–6.9."
+            )
+    if previous_protection_failure:
+        prompt += (
+            " A previous attempt omitted or changed a protected marker. Before returning, "
+            "verify that every distinct [[CLEAR_...]] marker in the source occurs at least once."
+        )
     response = _chat(client, deployment, prompt, protected.masked)
     try:
         restored = protected.restore(response)

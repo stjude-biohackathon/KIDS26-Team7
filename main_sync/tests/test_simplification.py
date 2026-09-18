@@ -2,6 +2,7 @@
 import unittest
 from unittest.mock import MagicMock, patch
 from pipeline.orchestrator import PipelineOrchestrator
+from pipeline.protection import ProtectionError
 from schemas.instruction_packet import ClinicalOrders, SafetyJudgeResult, EvaluationMetrics, InstructionPacket
 
 
@@ -30,6 +31,37 @@ class SimplificationTests(unittest.TestCase):
         self.assertEqual(result.evaluation_metrics.fkgl_score,5.8)
         translate.assert_called_once_with(unittest.mock.ANY,'test','Passing candidate.')
 
+    def test_missing_protected_value_retries_before_translation(self):
+        missing = ProtectionError(
+            'Protected values failed validation; draft requires review.',
+            draft_text='Give the medicine.',
+            findings=['Missing protected value: 5 mg (required at least once, found 0).'],
+        )
+        with patch('pipeline.orchestrator.get_client',return_value=(object(),'test')), patch(
+            'pipeline.live_llm.simplify_to_plain_language',
+            side_effect=[missing, 'Give 5 mg.'],
+        ) as simplify, patch(
+            'pipeline.evaluator.textstat.flesch_kincaid_grade', return_value=5.8,
+        ), patch(
+            'pipeline.live_llm.translate_to_spanish', return_value='Dé 5 mg.',
+        ) as translate, patch(
+            'pipeline.live_llm.back_translate_to_english', return_value='Give 5 mg.',
+        ), patch(
+            'pipeline.live_llm.judge_safety',
+            return_value=SafetyJudgeResult(overall_verdict='PASS'),
+        ):
+            result = PipelineOrchestrator().generate_live(
+                'Give 5 mg.', orders(), module_version='v1', condition='test'
+            )
+
+        self.assertEqual(simplify.call_count, 2)
+        self.assertTrue(
+            simplify.call_args_list[1].kwargs['previous_protection_failure']
+        )
+        self.assertEqual(result.simplified_en, 'Give 5 mg.')
+        self.assertEqual(result.evaluation_metrics.protection_failures, [])
+        translate.assert_called_once_with(unittest.mock.ANY, 'test', 'Give 5 mg.')
+
     def test_unmet_benchmark_returns_third_draft_with_failed_score(self):
         judge = SafetyJudgeResult(overall_verdict='PASS')
         with patch('pipeline.orchestrator.get_client',return_value=(object(),'test')), patch('pipeline.live_llm.simplify_to_plain_language',return_value='Too hard.') as simplify, patch('pipeline.evaluator.textstat.flesch_kincaid_grade',return_value=12.0), patch('pipeline.live_llm.translate_to_spanish', return_value='Muy difícil.') as translate, patch('pipeline.live_llm.back_translate_to_english', return_value='Too hard.'), patch('pipeline.live_llm.judge_safety', return_value=judge):
@@ -50,6 +82,9 @@ class SimplificationTests(unittest.TestCase):
             'condition, exception, warning, and clinical value.',
             _SIMPLIFY_SYSTEM_PROMPT,
         )
+        self.assertIn('one main idea per sentence', _SIMPLIFY_SYSTEM_PROMPT)
+        self.assertIn('common, familiar words', _SIMPLIFY_SYSTEM_PROMPT)
+        self.assertIn('Do not summarize', _SIMPLIFY_SYSTEM_PROMPT)
 
     def test_approval_blocks_out_of_range_readability(self):
         from app.review import approval_blockers
