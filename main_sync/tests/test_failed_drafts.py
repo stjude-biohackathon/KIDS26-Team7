@@ -158,6 +158,17 @@ class FailedDraftTests(unittest.TestCase):
         self.assertEqual(protected.restore(dose + ' ' + phone), '5 mg 911')
         self.assertEqual(protected.restore(dose + ' ' + dose + ' ' + dose + ' ' + phone), '5 mg 5 mg 5 mg 911')
 
+    def test_worded_timing_range_is_one_protected_value(self):
+        from pipeline.protection import ProtectedText, numeric_findings
+
+        source = 'Give 0.5 mg every 6 to 8 hours as needed.'
+        protected = ProtectedText(source)
+
+        self.assertIn('6 to 8 hours', protected.values.values())
+        self.assertNotIn('6 to ', protected.masked)
+        self.assertEqual(protected.restore(protected.masked), source)
+        self.assertEqual(numeric_findings(source, source), [])
+
     def test_repeated_source_value_can_pass_live_generation_and_recheck(self):
         source = 'Give 5 mg. The dose is 5 mg.'
         with provider(None), patch('pipeline.live_llm.simplify_to_plain_language', return_value='Give 5 mg.'):

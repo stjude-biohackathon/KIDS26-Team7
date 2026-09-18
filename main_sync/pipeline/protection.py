@@ -16,7 +16,7 @@ from pipeline.evaluator import (
 # incidental values such as age, list numbering, dates, and protocol versions
 # available for simplification or omission when they are not instructions.
 _TIMING_RE = re.compile(
-    r"\d+(?:\.\d+)?(?:\s*[-–]\s*\d+(?:\.\d+)?)?\s*"
+    r"\d+(?:\.\d+)?(?:\s*(?:[-–—]|\bto\b)\s*\d+(?:\.\d+)?)?\s*"
     r"(?:seconds?|minutes?|hours?|days?|weeks?|months?|times?)\b",
     re.IGNORECASE,
 )
