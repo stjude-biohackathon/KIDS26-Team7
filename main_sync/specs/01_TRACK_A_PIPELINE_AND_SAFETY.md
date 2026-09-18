@@ -37,7 +37,8 @@ Participant 1 owns the multi-LLM generation, translation, and safety verificatio
 
 ### 2.3 LLM2 Safety Judge (`pipeline/orchestrator.py`)
 - **Prompt Architecture**:
-  - Evaluates `simplified_en` against original `composite_template_text` and `clinical_orders`.
+  - Evaluates `simplified_en` against one authoritative `ORIGINAL CLINICAL INSTRUCTIONS` block: the exact composed source that LLM1 simplified. The judge does not receive a second structured-orders comparison block.
+  - Judges semantic equivalence rather than word, phrase, sentence-boundary, or formatting matches. Faithful plain-language paraphrases, split or combined sentences, headings, bullets, and deduplication pass when every instruction, fact, condition, exception, warning, action, urgency level, and clinical meaning remains. A definite clinical difference is flagged; genuinely ambiguous wording receives `NEEDS_REVIEW`.
   - Receives masked protected values so matching tokens can be compared across source and simplified text, but does not reproduce marker tokens in its JSON audit response.
   - JSON output schema:
     ```json

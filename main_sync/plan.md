@@ -121,7 +121,7 @@ The project progresses through 4 iterative synchronization points:
   - Readability score evaluator using `textstat` (FKGL target 5.0–6.9).
   - Verbatim lock regex extractor ensuring medication dosages, temperature thresholds, and clinic phone numbers are unrounded and unparaphrased.
 - **Component 3 (Safety Judge - LLM2)**:
-  - Evaluates factual drift, red-flag omission, and semantic contradictions.
+  - Compares simplified English with the single composed original-clinical-instructions source used by LLM1; it does not receive a separate structured-orders checklist. It evaluates semantic equivalence and accepts faithful plain-language rewording, sentence splitting/combining, formatting changes, and removal of exact repetition when no information changes. It still detects definite factual drift, red-flag omission, changed conditions or urgency, added clinical advice, and semantic contradictions.
   - Assigns `PASS`, `NEEDS_REVIEW`, or `FLAGGED_FOR_REVIEW`.
 - **Component 4 (Bilingual Translation)**:
   - Optional forward Spanish translation (LLM1) and back-translation to English (LLM2) expose semantic drift. The UI explicitly passes `translate=False` by default and skips both translation calls, including on edit rechecks. LLM2 still judges English safety.

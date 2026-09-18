@@ -266,7 +266,7 @@ class LivePipelineTests(unittest.TestCase):
         with context:
             result=PipelineOrchestrator().generate_live('Administer 5 mg orally daily.',orders,module_version='v1',condition='demo')
         self.assertTrue(result.simplified_en.startswith('Give 5 mg orally daily.'))
-        self.assertIn('STRUCTURED CLINICAL ORDERS', result.simplified_en)
+        self.assertIn('PATIENT-SPECIFIC CLINICAL INSTRUCTIONS', result.simplified_en)
         self.assertIn('Diagnosis: Synthetic example', result.simplified_en)
         self.assertIn('Medication: Demo | Dose: 5 mg', result.simplified_en)
         self.assertEqual(result.translated_es, 'ES: ' + result.simplified_en)

@@ -36,7 +36,11 @@ def _bind_template(template: str, orders: ClinicalOrders) -> str:
 def compose_clinical_text(template: str, orders: ClinicalOrders) -> str:
     """Bind vetted module wording and append the complete effective order."""
     text = _bind_template(template, orders)
-    return text + "\n\nSTRUCTURED CLINICAL ORDERS\n" + live_llm.format_orders(orders)
+    return (
+        text
+        + "\n\nPATIENT-SPECIFIC CLINICAL INSTRUCTIONS\n"
+        + live_llm.format_orders(orders)
+    )
 
 
 def _evaluate_outputs(
@@ -271,7 +275,7 @@ class PipelineOrchestrator:
         # draft. The deterministic gate below marks it FLAGGED_FOR_REVIEW, and
         # approval remains blocked by the measured FKGL score.
         spanish, back, metrics = self._complete_live_review(
-            composite_template_text, source, english, saved_orders, metrics, failures, translate,
+            source, english, saved_orders, metrics, failures, translate,
         )
 
         return InstructionPacket(
@@ -312,8 +316,7 @@ class PipelineOrchestrator:
         failures = [f"English recheck: {finding}" for finding in numeric_findings(source, edited_en)]
         metrics = evaluate_text(edited_en, revision.clinical_orders)
         revision.translated_es, revision.back_translated_en, metrics = self._complete_live_review(
-            revision.original_clinical_text, source, edited_en, revision.clinical_orders,
-            metrics, failures, translate,
+            source, edited_en, revision.clinical_orders, metrics, failures, translate,
         )
         revision.evaluation_metrics = metrics
 
@@ -326,7 +329,7 @@ class PipelineOrchestrator:
         revision.reviewed_at = None
         return revision
 
-    def _complete_live_review(self, original, source, english, orders, metrics, failures, translate):
+    def _complete_live_review(self, source, english, orders, metrics, failures, translate):
         """Run every requested stage and preserve all failures for clinician review."""
         failures = list(failures)
         for value in metrics.verbatim_mismatches:
@@ -355,7 +358,7 @@ class PipelineOrchestrator:
             failures.extend(stage_failures)
         metrics.protection_failures = failures
         metrics.safety_judge = live_llm.judge_safety(
-            llm2_client, llm2_deployment, original, english, orders,
+            llm2_client, llm2_deployment, source, english,
         )
         metrics = _enforce_deterministic_safety_gate(
             metrics, spanish, back, orders, source=source, english=english,

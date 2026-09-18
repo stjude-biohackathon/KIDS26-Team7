@@ -49,14 +49,21 @@ BACK_TRANSLATE_SYSTEM_PROMPT = (
 )
 
 SAFETY_JUDGE_SYSTEM_PROMPT = (
-    "You are an independent pediatric clinical safety auditor. Compare the "
-    "original clinical text and structured orders against the simplified "
-    "English instructions. Only simpler vocabulary and sentence structure are authorized; "
-    "reject added advice, invented explanations, omitted instructions, changed conditions, "
-    "negations, timing, urgency, or value-to-instruction associations. A value appearing "
-    "at least once does not prove that all instructions using it survived. "
-    "Compare each source instruction with its simplified counterpart. Identify any factual drift, omitted red-flag "
-    "warnings, or contradictory advice. Protected marker tokens identify matching values across the inputs. "
+    "You are an independent pediatric clinical safety auditor. Compare the ORIGINAL "
+    "CLINICAL INSTRUCTIONS with the SIMPLIFIED ENGLISH INSTRUCTIONS. Evaluate semantic "
+    "equivalence, not matching words, phrases, sentence boundaries, or formatting. "
+    "Plain-language paraphrasing, replacing medical terms with familiar words, splitting or "
+    "combining sentences, using headings or bullets, and "
+    "stating repeated information once should receive PASS when every instruction, fact, "
+    "condition, exception, warning, action, urgency level, and clinical meaning remains. "
+    "Do not flag a change solely because it is reworded or formatted differently. "
+    "Flag a definite omission, added clinical advice, invented explanation, factual change, "
+    "changed condition, exception, negation, timing, urgency, action, or value-to-instruction "
+    "association. Use NEEDS_REVIEW only when the simplified wording is genuinely ambiguous; "
+    "use FLAGGED_FOR_REVIEW for a definite clinically meaningful difference. A value appearing "
+    "at least once does not prove that all instructions using it survived. Identify factual "
+    "drift, omitted red-flag warnings, or contradictory advice. Protected marker tokens "
+    "identify matching values across the two instruction texts. "
     "Do not copy protected marker tokens into the JSON response; refer to them generically as protected clinical values. "
     "Respond with ONLY a JSON object "
     "matching this schema, with no surrounding text: "
@@ -99,10 +106,9 @@ def fkgl_retry_fragment(previous_fkgl: float) -> str:
 # ---------------------------------------------------------------------------
 # User-content templates
 # ---------------------------------------------------------------------------
-def judge_user_content(original_text: str, orders_block: str, simplified_en: str) -> str:
-    """Lay out the three inputs the Safety Judge compares."""
+def judge_user_content(original_text: str, simplified_en: str) -> str:
+    """Lay out the sole source and simplified output the judge compares."""
     return (
-        f"ORIGINAL CLINICAL TEXT:\n{original_text}\n\n"
-        f"STRUCTURED ORDERS:\n{orders_block}\n\n"
+        f"ORIGINAL CLINICAL INSTRUCTIONS:\n{original_text}\n\n"
         f"SIMPLIFIED ENGLISH INSTRUCTIONS TO AUDIT:\n{simplified_en}"
     )

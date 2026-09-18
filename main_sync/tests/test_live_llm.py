@@ -133,7 +133,7 @@ class LiveLlmCallTests(unittest.TestCase):
             '"clinical_risk_score": 0.1, "explanation": "Looks fine."}'
         )
         client = self._mock_client(payload)
-        result = live_llm.judge_safety(client, "deploy", "orig", "simplified", synthetic_orders())
+        result = live_llm.judge_safety(client, "deploy", "orig", "simplified")
         self.assertIsInstance(result, SafetyJudgeResult)
         self.assertEqual(result.overall_verdict, "PASS")
         self.assertIsNone(result.failure_category)
@@ -147,8 +147,13 @@ class LiveLlmCallTests(unittest.TestCase):
             user_content = kwargs['messages'][1]['content']
             self.assertNotIn('5 mg', user_content)
             self.assertIn('[[CLEAR_', user_content)
+            self.assertNotIn('STRUCTURED ORDERS:', user_content)
+            self.assertIn('ORIGINAL CLINICAL INSTRUCTIONS:', user_content)
             self.assertNotIn('Preserve every distinct [[CLEAR_...]] marker', system_prompt)
             self.assertIn('Do not copy protected marker tokens', system_prompt)
+            self.assertIn('Evaluate semantic equivalence', system_prompt)
+            self.assertIn('should receive PASS', system_prompt)
+            self.assertNotIn('structured orders', system_prompt.lower())
             payload = (
                 '{"overall_verdict":"PASS","factual_drift_detected":false,'
                 '"omitted_red_flags":[],"contradictory_advice":[],'
@@ -158,7 +163,7 @@ class LiveLlmCallTests(unittest.TestCase):
 
         client.chat.completions.create.side_effect = reply
         result = live_llm.judge_safety(
-            client, 'deploy', 'Give 5 mg.', 'Give 5 mg.', synthetic_orders()
+            client, 'deploy', 'Give 5 mg.', 'Give 5 mg.'
         )
         self.assertEqual(result.overall_verdict, 'PASS')
         self.assertIsNone(result.failure_category)
@@ -166,20 +171,20 @@ class LiveLlmCallTests(unittest.TestCase):
     def test_judge_safety_strips_code_fences(self):
         payload = '```json\n{"overall_verdict":"NEEDS_REVIEW","factual_drift_detected":false,"omitted_red_flags":[],"contradictory_advice":[],"clinical_risk_score":0,"explanation":"ok"}\n```'
         client = self._mock_client(payload)
-        result = live_llm.judge_safety(client, "deploy", "orig", "simplified", synthetic_orders())
+        result = live_llm.judge_safety(client, "deploy", "orig", "simplified")
         self.assertEqual(result.overall_verdict, "NEEDS_REVIEW")
 
     def test_judge_safety_never_raises_on_api_failure(self):
         client = MagicMock()
         client.chat.completions.create.side_effect = RuntimeError("PRIVATE_CANARY network detail")
-        result = live_llm.judge_safety(client, "deploy", "orig", "simplified", synthetic_orders())
+        result = live_llm.judge_safety(client, "deploy", "orig", "simplified")
         self.assertEqual(result.overall_verdict, "FLAGGED_FOR_REVIEW")
         self.assertEqual(result.failure_category, "REQUEST_FAILED")
         self.assertNotIn("PRIVATE_CANARY", result.explanation)
 
     def test_judge_safety_never_raises_on_malformed_json(self):
         client = self._mock_client("not valid json at all")
-        result = live_llm.judge_safety(client, "deploy", "orig", "simplified", synthetic_orders())
+        result = live_llm.judge_safety(client, "deploy", "orig", "simplified")
         self.assertEqual(result.overall_verdict, "FLAGGED_FOR_REVIEW")
         self.assertEqual(result.failure_category, "INVALID_JSON")
 
@@ -198,7 +203,6 @@ class LiveLlmCallTests(unittest.TestCase):
             with self.subTest(expected=expected):
                 result = live_llm.judge_safety(
                     self._mock_client(response), "deploy", "orig", "simplified",
-                    synthetic_orders(),
                 )
                 self.assertEqual(result.overall_verdict, "FLAGGED_FOR_REVIEW")
                 self.assertEqual(result.failure_category, expected)

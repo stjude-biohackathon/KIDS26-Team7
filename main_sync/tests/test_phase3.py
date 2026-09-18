@@ -224,7 +224,7 @@ class FinalSafetyGateTests(unittest.TestCase):
         from pipeline.live_llm import judge_safety
         client=MagicMock()
         client.chat.completions.create.return_value.choices=[MagicMock(message=MagicMock(content='{"overall_verdict":"PASS"}'))]
-        result=judge_safety(client,'synthetic','Source','Output',packet().clinical_orders)
+        result=judge_safety(client,'synthetic','Source','Output')
         self.assertEqual(result.overall_verdict,'FLAGGED_FOR_REVIEW')
 
     def test_preserving_old_dose_does_not_allow_an_added_wrong_dose(self):

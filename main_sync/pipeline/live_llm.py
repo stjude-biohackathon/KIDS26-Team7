@@ -140,7 +140,7 @@ def _judge_failure(category: str) -> SafetyJudgeResult:
 
 
 def judge_safety(
-    client, deployment: str, original_text: str, simplified_en: str, orders: ClinicalOrders
+    client, deployment: str, original_text: str, simplified_en: str
 ) -> SafetyJudgeResult:
     """LLM2: audit the simplified text for drift, omissions, and contradictions.
 
@@ -148,9 +148,7 @@ def judge_safety(
     caught here and reported as FLAGGED_FOR_REVIEW rather than raised, so a
     Safety Judge outage never crashes the clinician workflow.
     """
-    user_content = prompts.judge_user_content(
-        original_text, format_orders(orders), simplified_en
-    )
+    user_content = prompts.judge_user_content(original_text, simplified_en)
     try:
         protected = ProtectedText(user_content)
     except ProtectionError:
