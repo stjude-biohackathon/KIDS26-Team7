@@ -20,9 +20,9 @@ Participant 2 owns the data lifecycle, security compliance, persistence, and pri
 ### 2.1 Canonical Data Schema (`schemas/instruction_packet.py`)
 - **Key Models**:
   - `MedicationOrder`: Name, dose, route, frequency, special instructions.
-  - `ClinicalOrders`: Patient ID, age, diagnosis, medications list, urgent/emergency fever thresholds, daytime/after-hours phone numbers, `order_id`, `order_version`.
+  - `ClinicalOrders`: Patient ID, age, diagnosis, weight, medications list, hydration order, urgent/emergency fever thresholds, red-flag symptoms, contraindications, daytime/after-hours/emergency contacts, `order_id`, `order_version`, and `version_label`.
   - `EvaluationMetrics`: Readability scores (FKGL), verbatim preservation match/mismatch flags, Safety Judge verdict, and stage-labeled `protection_failures` (default empty list for compatibility).
-  - `InstructionPacket`: Master packet binding original input, simplified EN, translated ES, back-translated EN, review status (`APPROVED`, `EDITED_AND_APPROVED`, `REJECTED_DRIFT`, `PENDING`), `module_version`, `order_version`, `parent_packet_id`, and `is_simulation`.
+  - `InstructionPacket`: Master packet binding original module input, immutable `source_clinical_orders`, effective `clinical_orders`, simplified EN, translated ES, back-translated EN, review status (`APPROVED`, `EDITED_AND_APPROVED`, `REJECTED_DRIFT`, `PENDING`), `module_version`, `order_version`, `parent_packet_id`, and `is_simulation`.
 - **Physician Annotation Logic**:
   - `get_physician_annotation(packet)` helper returning:
     - `"Approved by physician"`
@@ -53,8 +53,8 @@ Participant 2 owns the data lifecycle, security compliance, persistence, and pri
 - **Source-of-Truth Contract**:
   - `stjude-biohackathon/team7-data` module `instruction_text` and synthetic-order fields are the sole clinical source used to build original instructions.
   - Preserve every usable `instruction_text` value verbatim and in the declared section order. Reject an instruction record that lacks a category or non-empty `instruction_text`; never silently omit it.
-  - Preserve Team7 `hydration_order` and `red_flag_symptoms` text when composing the selected module.
-  - Missing medication, threshold, or contact fields remain blank. Canonical model defaults and UI demo values must never be substituted into remotely loaded Team7 records.
+  - Map every field currently published by the Team7 orders schema: weight, complete medications, hydration, thresholds, red flags, contraindications, contacts, order identifiers, and version metadata. Keep those values in `ClinicalOrders`; do not append them to or overwrite module `instruction_text`.
+  - Missing medication, hydration, threshold, red-flag, contraindication, contact, or metadata fields remain blank. Canonical model defaults and UI demo values must never be substituted into remotely loaded Team7 records.
 
 ### 2.3 Session Review Library (`storage/gold_library.py`)
 - `ReviewLibrary` is owned by one Streamlit session; no module-global clinical store or disk persistence.

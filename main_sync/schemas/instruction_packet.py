@@ -19,14 +19,19 @@ class ClinicalOrders(BaseModel):
     patient_id: str
     age: Optional[str] = None
     diagnosis: str
+    weight_kg: Optional[float] = None
     medications: List[MedicationOrder] = Field(default_factory=list)
+    hydration_order: str = ""
     urgent_fever_threshold: str = "100.4°F"
     emergency_fever_threshold: str = "101.0°F"
+    red_flag_symptoms: List[str] = Field(default_factory=list)
+    contraindications: List[str] = Field(default_factory=list)
     daytime_phone: str = ""
     after_hours_phone: str = ""
     emergency_phone: str = "911"
     order_id: str = ""
     order_version: str = "v1.0.0"
+    version_label: str = ""
 
 
 class SafetyJudgeResult(BaseModel):
@@ -68,6 +73,7 @@ class InstructionPacket(BaseModel):
     module_version: str = "v1.0.0"
     order_version: str = "v1.0.0"
     original_clinical_text: str = ""
+    source_clinical_orders: Optional[ClinicalOrders] = None
     clinical_orders: ClinicalOrders
     simplified_en: str = ""
     translated_es: str = ""

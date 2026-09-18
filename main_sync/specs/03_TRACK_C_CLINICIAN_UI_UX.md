@@ -34,9 +34,9 @@ Participant 3 owns the clinician-facing interface and review workflow:
   - Order Set Version displays the actual loaded version and order ID. The current loader exposes one order set per condition. Historical labels without archived content are not offered.
   - Do not display a redundant active-protocol summary beneath the selectors.
 - **Clinical Orders Customization**:
-  - Patient synthetic ID (shown as MRN), age, and the field labeled Module. Internal schema names remain compatible.
+  - Every field is initialized from the loaded Team7 order and acts as an explicit physician override: patient synthetic ID (shown as MRN), age, diagnosis, weight, medications, hydration, fever thresholds, red flags, contraindications, and contacts. Missing Team7 values start blank.
   - Medication expanders (Name, Dose, Frequency, Route, Special instructions), with an Add medication control that appends a blank medication row.
-  - Fever threshold inputs use the exact loaded Team7 values. Missing values stay blank; the UI does not supply default thresholds, routes, ages, or contact numbers.
+  - Fever threshold inputs use the exact loaded Team7 values. The UI does not supply default thresholds, routes, ages, or contact numbers.
   - Daytime clinic, 24/7 triage, and emergency contact numbers.
 - **Scenario C Drift Simulator Expander**:
   - Allows clinicians to test error detection by injecting simulated clinical contradictions, altered thresholds, or altered dosages.
@@ -47,7 +47,8 @@ The front page has reduced top padding and the title "Pediatric Discharge Instru
 Generation replaces those controls with FKGL (one decimal), verbatim percentage (whole number), and judge verdict. Verbatim help lists only missing safety tokens; correctly preserved tokens are not listed. New Generation returns to the preview. No viewport slider is shown. Original clinical orders and the label-free simplified-English editor start at equal width and height; the original pane has a horizontal resize handle that gives its remaining width to the editor. When Spanish is requested, Spanish and back-translated English appear as a second equal-width row.
 
 1. **Original Clinical Orders & Instructions (Col 1)**:
-   - Displays the complete, unsimplified Team7 module wording combined with Team7 synthetic orders. Every source instruction remains present verbatim; formatting may add visual headings and spacing but cannot rewrite, omit, or supplement clinical information. The same source renderer is used before and after generation.
+   - Displays the complete, unsimplified Team7 module wording and immutable Team7 synthetic order snapshot. Every source instruction remains present verbatim; formatting may add visual headings and spacing but cannot rewrite, omit, or supplement clinical information. The same source renderer is used before and after generation.
+   - When sidebar values differ from the Team7 order, an override notice names the changed fields. The original pane continues to show Team7 values. Generation, safety evaluation, export, and review history use the separately recorded effective order containing the physician overrides.
 2. **Simplified English Handout (Col 2)**:
    - Displays LLM1 simplified English with restored order values (required FKGL 5.0–6.9). Live generation allows three attempts. If readability, protected values, or the safety judge fails, the simplified draft remains visible with its failure reason and a not-for-patient-use warning. Clinician edits must pass fresh checks before approval.
    - Telemetry badges: FKGL score, verbatim lock status (matches/mismatches), and Safety Judge verdict.

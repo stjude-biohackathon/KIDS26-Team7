@@ -34,11 +34,9 @@ def _bind_template(template: str, orders: ClinicalOrders) -> str:
 
 
 def compose_clinical_text(template: str, orders: ClinicalOrders) -> str:
-    """Bind vetted wording and append supplied order fields when needed."""
+    """Bind vetted module wording and append the complete effective order."""
     text = _bind_template(template, orders)
-    if check_verbatim(text, orders)[1]:
-        text += "\n\nSTRUCTURED ORDERS\n" + live_llm.format_orders(orders)
-    return text
+    return text + "\n\nSTRUCTURED CLINICAL ORDERS\n" + live_llm.format_orders(orders)
 
 
 def _evaluate_outputs(
@@ -130,6 +128,7 @@ class PipelineOrchestrator:
         composite_template_text: str,
         orders: ClinicalOrders,
         *,
+        source_orders: ClinicalOrders | None = None,
         module_version: str,
         condition: str,
         simplified_template_text: str | None = None,
@@ -149,6 +148,7 @@ class PipelineOrchestrator:
         # Copy nested medication records too: later loader/UI edits must not
         # silently change the inputs recorded in a previously created packet.
         saved_orders = orders.model_copy(deep=True)
+        saved_source_orders = (source_orders or orders).model_copy(deep=True)
         english = _bind_template(
             composite_template_text if simplified_template_text is None else simplified_template_text,
             saved_orders,
@@ -169,6 +169,7 @@ class PipelineOrchestrator:
             module_version=module_version,
             order_version=saved_orders.order_version,
             original_clinical_text=composite_template_text,
+            source_clinical_orders=saved_source_orders,
             clinical_orders=saved_orders,
             simplified_en=english,
             translated_es=spanish,
@@ -212,6 +213,7 @@ class PipelineOrchestrator:
         composite_template_text: str,
         orders: ClinicalOrders,
         *,
+        source_orders: ClinicalOrders | None = None,
         module_version: str,
         condition: str,
         translate: bool = True,
@@ -237,6 +239,7 @@ class PipelineOrchestrator:
         )):
             raise ValueError("Source text, condition, and module/order versions are required.")
         saved_orders = orders.model_copy(deep=True)
+        saved_source_orders = (source_orders or orders).model_copy(deep=True)
 
         llm1_client, llm1_deployment = get_client(self.llm1_model)
         source = compose_clinical_text(composite_template_text, saved_orders)
@@ -277,6 +280,7 @@ class PipelineOrchestrator:
             module_version=module_version,
             order_version=saved_orders.order_version,
             original_clinical_text=composite_template_text,
+            source_clinical_orders=saved_source_orders,
             clinical_orders=saved_orders,
             simplified_en=english,
             translated_es=spanish,

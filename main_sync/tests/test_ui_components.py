@@ -45,15 +45,22 @@ def offline_app(load_status=None, modules=None, orders=None):
     def _unavailable(*_args, **_kwargs):
         raise RuntimeError("Live model call disabled in unit tests.")
 
-    def _synthetic_generation(_self, source, orders, *, condition, module_version, translate=True):
+    def _synthetic_generation(
+        _self, source, orders, *, condition, module_version, translate=True,
+        source_orders=None,
+    ):
         # A synthetic live-service boundary for structural UI tests only.
         if condition in MOCK_MODULES and module_version in MOCK_MODULES[condition]:
             result = run_mock_pipeline(condition, module_version, orders)
+            result.source_clinical_orders = (source_orders or orders).model_copy(deep=True)
             if not translate:
                 result.translated_es = result.back_translated_en = ""
             return result
         from pipeline.orchestrator import PipelineOrchestrator
-        return PipelineOrchestrator().generate(source, orders, condition=condition, module_version=module_version)
+        return PipelineOrchestrator().generate(
+            source, orders, source_orders=source_orders,
+            condition=condition, module_version=module_version,
+        )
 
 
     st.cache_data.clear()

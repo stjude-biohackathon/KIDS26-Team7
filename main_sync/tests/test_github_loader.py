@@ -227,6 +227,7 @@ class UpstreamSchemaAdapterTests(unittest.TestCase):
                     "temperature_threshold_urgent": "100.4°F (38.0°C)",
                     "temperature_threshold_emergency": "101.0°F (38.3°C)",
                     "red_flag_symptoms": ["Lethargy", "Sudden chest pain"],
+                    "contraindications": ["Do not use cold packs."],
                     "clinic_phone_daytime": "555-0144 (Day Clinic)",
                     "clinic_phone_after_hours": "555-0190 (On-Call)",
                     "emergency_contact": "Call 911 or go to the Emergency Department",
@@ -317,6 +318,14 @@ class UpstreamSchemaAdapterTests(unittest.TestCase):
         self.assertEqual(order.patient_id, "SYN-PED-101")
         self.assertEqual(order.age, "9 years")
         self.assertEqual(order.diagnosis, "Sickle Cell Disease with acute pain episode")
+        self.assertEqual(order.version_label, "")
+        self.assertEqual(order.weight_kg, 28.5)
+        self.assertEqual(
+            order.hydration_order,
+            "Encourage 1,800 to 2,000 mL of oral fluids daily.",
+        )
+        self.assertEqual(order.red_flag_symptoms, ["Lethargy", "Sudden chest pain"])
+        self.assertEqual(order.contraindications, ["Do not use cold packs."])
         self.assertEqual(order.urgent_fever_threshold, "100.4°F (38.0°C)")
         self.assertEqual(order.emergency_fever_threshold, "101.0°F (38.3°C)")
         self.assertEqual(order.daytime_phone, "555-0144 (Day Clinic)")
@@ -349,15 +358,22 @@ class UpstreamSchemaAdapterTests(unittest.TestCase):
         self.assertEqual(order.after_hours_phone, "")
         self.assertEqual(order.emergency_phone, "")
 
-    def test_merge_order_safety_sections_preserves_hydration_and_red_flags(self):
+    def test_order_specific_text_stays_structured_and_does_not_modify_module(self):
         modules = github_loader.adapt_modules(self._modules_payload())
-        merged = github_loader.merge_order_safety_sections(modules, self._orders_payload())
-        text = merged["sickle_cell_pain"]["v1.2.0"]
-        self.assertIn("Encourage 1,800 to 2,000 mL of oral fluids daily.", text)
-        self.assertIn("Lethargy", text)
-        self.assertIn("Sudden chest pain", text)
-        # Original instruction content is still present.
+        orders = github_loader.adapt_orders(self._orders_payload())
+        text = modules["sickle_cell_pain"]["v1.2.0"]
+
+        self.assertNotIn("Encourage 1,800 to 2,000 mL of oral fluids daily.", text)
+        self.assertNotIn("Lethargy", text)
         self.assertIn("Offer your child water often.", text)
+        self.assertEqual(
+            orders["sickle_cell_pain"].hydration_order,
+            "Encourage 1,800 to 2,000 mL of oral fluids daily.",
+        )
+        self.assertEqual(
+            orders["sickle_cell_pain"].red_flag_symptoms,
+            ["Lethargy", "Sudden chest pain"],
+        )
 
 
 class LoadStatusReportingTests(unittest.TestCase):

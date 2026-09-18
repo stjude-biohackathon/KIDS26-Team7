@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from pipeline.orchestrator import PipelineOrchestrator
+from pipeline.orchestrator import PipelineOrchestrator, compose_clinical_text
 from pipeline.evaluator import check_verbatim, evaluate_text, extract_verbatim_tokens
 from schemas.instruction_packet import ClinicalOrders, MedicationOrder
 
@@ -26,6 +26,50 @@ def synthetic_orders(**changes):
 
 
 class MockPipelineTests(unittest.TestCase):
+    def test_composer_includes_complete_team7_order_content(self):
+        orders = synthetic_orders(
+            weight_kg=28.5,
+            hydration_order="Encourage 1,800 mL of fluids daily.",
+            red_flag_symptoms=["Sudden chest pain", "Trouble breathing"],
+            contraindications=["Do not use cold packs."],
+        )
+
+        composed = compose_clinical_text("Clinician-vetted module sentence.", orders)
+
+        for expected in (
+            "Weight: 28.5 kg",
+            "Hydration: Encourage 1,800 mL of fluids daily.",
+            "Red flag: Sudden chest pain",
+            "Red flag: Trouble breathing",
+            "Contraindication: Do not use cold packs.",
+        ):
+            self.assertIn(expected, composed)
+
+    def test_packet_keeps_team7_source_separate_from_physician_overrides(self):
+        source_orders = synthetic_orders(
+            urgent_fever_threshold="100.4°F (38.0°C)",
+            hydration_order="Offer fluids often.",
+        )
+        effective_orders = source_orders.model_copy(deep=True)
+        effective_orders.urgent_fever_threshold = "100.5°F (38.1°C)"
+
+        packet = PipelineOrchestrator().generate(
+            "Clinician-vetted module sentence.",
+            effective_orders,
+            source_orders=source_orders,
+            module_version="v1.2.0",
+            condition="demo",
+        )
+
+        self.assertEqual(
+            packet.source_clinical_orders.urgent_fever_threshold,
+            "100.4°F (38.0°C)",
+        )
+        self.assertEqual(
+            packet.clinical_orders.urgent_fever_threshold,
+            "100.5°F (38.1°C)",
+        )
+
     def test_generation_binds_values_without_rewriting_or_mutating_the_source(self):
         source = "The amount in this example is $medication_0_dose."
         orders = synthetic_orders(medications=[MedicationOrder(name="Synthetic", dose="5 mg")])
@@ -221,8 +265,11 @@ class LivePipelineTests(unittest.TestCase):
         first,second,context=self.clients()
         with context:
             result=PipelineOrchestrator().generate_live('Administer 5 mg orally daily.',orders,module_version='v1',condition='demo')
-        self.assertEqual(result.simplified_en,'Give 5 mg orally daily.')
-        self.assertEqual(result.translated_es,'ES: Give 5 mg orally daily.')
+        self.assertTrue(result.simplified_en.startswith('Give 5 mg orally daily.'))
+        self.assertIn('STRUCTURED CLINICAL ORDERS', result.simplified_en)
+        self.assertIn('Diagnosis: Synthetic example', result.simplified_en)
+        self.assertIn('Medication: Demo | Dose: 5 mg', result.simplified_en)
+        self.assertEqual(result.translated_es, 'ES: ' + result.simplified_en)
         self.assertEqual(result.back_translated_en,result.simplified_en)
         self.assertEqual(result.evaluation_metrics.safety_judge.overall_verdict,'PASS')
         self.assertEqual(first.chat.completions.create.call_count,2)

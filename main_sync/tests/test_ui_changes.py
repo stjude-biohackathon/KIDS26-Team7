@@ -1,5 +1,6 @@
 """Acceptance coverage for uichanges.md and optional Spanish review."""
 import unittest
+from html import escape
 from pathlib import Path
 from unittest.mock import patch
 from tests.test_phase3 import phase3_app, click
@@ -132,7 +133,7 @@ class UiChangesTests(unittest.TestCase):
         self.assertIn('[data-testid="stStatusWidget"]', source)
         self.assertNotIn('[data-testid="stSpinner"]', source)
         self.assertLess(
-            source.index('_compose_original_preview_html(active_orders'),
+            source.index('_compose_original_preview_html(base_order'),
             source.index('if generate_clicked:'),
         )
 
@@ -140,17 +141,19 @@ class UiChangesTests(unittest.TestCase):
         from tests.test_ui_components import offline_app
 
         statement = (
-            "If your child has a temperature of 100.4°F or higher, "
-            "call the care team right away."
+            "Call your child's oncology/hematology team right away - any time of day or night - "
+            "for a temperature of 100.4°F (38.0°C) or higher that lasts more than an hour, "
+            "or a single reading of 101°F (38.3°C) or higher. Do not wait to see if it "
+            "comes down on its own."
         )
-        modules = {"sickle_cell_pain": {"team7-current": statement}}
+        modules = {"fever_neutropenia": {"team7-current": statement}}
         source_orders = {
-            "sickle_cell_pain": ClinicalOrders(
+            "fever_neutropenia": ClinicalOrders(
                 patient_id="SYN-TEAM7",
-                diagnosis="Sickle Cell Disease",
+                diagnosis="Fever and Neutropenia",
                 order_id="ORD-TEAM7",
                 order_version="team7-current",
-                urgent_fever_threshold="100.4°F",
+                urgent_fever_threshold="100.4°F (38.0°C)",
                 emergency_fever_threshold="",
                 emergency_phone="",
             )
@@ -162,13 +165,65 @@ class UiChangesTests(unittest.TestCase):
                 item.value for item in at.markdown
                 if "<div class='clinical-orders-preview'>" in item.value
             )
-            self.assertIn(statement, preview)
+            self.assertIn(escape(statement), preview)
             click(at, 'Generate Simplified Instructions')
             self.assertEqual(
                 at.session_state['current_packet'].original_clinical_text,
                 statement,
             )
-            self.assertTrue(any(statement in item.value for item in at.markdown))
+            self.assertTrue(any(escape(statement) in item.value for item in at.markdown))
+
+    def test_sidebar_edit_is_an_override_and_does_not_replace_team7_source(self):
+        from tests.test_ui_components import offline_app
+
+        modules = {
+            "fever_neutropenia": {
+                "v1.2.0": "Call the care team for the fever values in the order."
+            }
+        }
+        source_orders = {
+            "fever_neutropenia": ClinicalOrders(
+                patient_id="SYN-OVERRIDE",
+                diagnosis="Fever and Neutropenia",
+                order_id="ORD-OVERRIDE",
+                order_version="v1.2.0",
+                urgent_fever_threshold="100.4°F (38.0°C)",
+                emergency_fever_threshold="101°F (38.3°C)",
+                emergency_phone="911",
+            )
+        }
+
+        with offline_app(modules=modules, orders=source_orders):
+            at = self.app()
+            next(item for item in at.text_input if item.label == "Urgent Fever:").input(
+                "100.5°F (38.1°C)"
+            ).run()
+
+            preview = next(
+                item.value for item in at.markdown
+                if "<div class='clinical-orders-preview'>" in item.value
+            )
+            self.assertIn("Physician overrides applied", preview)
+            self.assertIn("100.4°F (38.0°C)", preview)
+            self.assertNotIn("100.5°F (38.1°C)", preview)
+
+            click(at, "Generate Simplified Instructions")
+            packet = at.session_state["current_packet"]
+            self.assertEqual(
+                packet.source_clinical_orders.urgent_fever_threshold,
+                "100.4°F (38.0°C)",
+            )
+            self.assertEqual(
+                packet.clinical_orders.urgent_fever_threshold,
+                "100.5°F (38.1°C)",
+            )
+            reviewed_preview = next(
+                item.value for item in at.markdown
+                if "<div class='clinical-orders-preview'>" in item.value
+            )
+            self.assertIn("Physician overrides applied", reviewed_preview)
+            self.assertIn("100.4°F (38.0°C)", reviewed_preview)
+            self.assertNotIn("100.5°F (38.1°C)", reviewed_preview)
 
     def test_non_github_source_is_blocked_even_without_error_detail(self):
         from tests.test_ui_components import offline_app

@@ -290,6 +290,14 @@ st.markdown(
         margin: 0.45rem 0;
         padding-left: 0.65rem;
     }
+    .override-notice {
+        margin: 0.8rem 0;
+        padding: 0.65rem 0.8rem;
+        border: 1px solid #D97706;
+        border-radius: 6px;
+        background: #FFFBEB;
+        color: #78350F;
+    }
     .st-key-generation_controls [data-testid="stHorizontalBlock"] {
         align-items: center;
         justify-content: center;
@@ -531,6 +539,16 @@ with st.sidebar:
     patient_id = st.text_input("MRN:", value=base_order.patient_id, key=f"patient_id_{condition}_{order_widget_key}")
     age = st.text_input("Patient Age:", value=base_order.age or "", key=f"age_{condition}_{order_widget_key}")
     diagnosis = st.text_input("Diagnosis:", value=base_order.diagnosis, key=f"diagnosis_{condition}_{order_widget_key}")
+    weight_text = st.text_input(
+        "Weight (kg):",
+        value=(f"{base_order.weight_kg:g}" if base_order.weight_kg is not None else ""),
+        key=f"weight_{condition}_{order_widget_key}",
+    )
+    try:
+        weight_kg = float(weight_text) if weight_text.strip() else None
+    except ValueError:
+        st.error("Weight must be a number in kilograms or left blank.")
+        st.stop()
 
     # Dynamic Medications
     with st.expander("Prescribed Medications", expanded=False):
@@ -570,6 +588,26 @@ with st.sidebar:
                 )
             )
 
+    with st.expander("Hydration, Red Flags & Contraindications", expanded=False):
+        hydration_order = st.text_area(
+            "Hydration Order:", value=base_order.hydration_order,
+            key=f"hydration_{condition}_{order_widget_key}",
+        )
+        red_flags_text = st.text_area(
+            "Red Flag Symptoms (one per line):",
+            value="\n".join(base_order.red_flag_symptoms),
+            key=f"red_flags_{condition}_{order_widget_key}",
+        )
+        contraindications_text = st.text_area(
+            "Contraindications (one per line):",
+            value="\n".join(base_order.contraindications),
+            key=f"contraindications_{condition}_{order_widget_key}",
+        )
+    red_flag_symptoms = [line.strip() for line in red_flags_text.splitlines() if line.strip()]
+    contraindications = [
+        line.strip() for line in contraindications_text.splitlines() if line.strip()
+    ]
+
     col_t1, col_t2 = st.columns(2)
     with col_t1:
         fever_urg = st.text_input(
@@ -599,14 +637,19 @@ with st.sidebar:
         order_id=base_order.order_id,
         order_version=order_version,
         patient_id=patient_id,
-        age=age,
+        age=age or None,
         diagnosis=diagnosis,
+        weight_kg=weight_kg,
         medications=med_list,
+        hydration_order=hydration_order,
         urgent_fever_threshold=fever_urg,
         emergency_fever_threshold=fever_emg,
+        red_flag_symptoms=red_flag_symptoms,
+        contraindications=contraindications,
         daytime_phone=daytime_phone,
         after_hours_phone=after_hours_phone,
         emergency_phone=emergency_phone,
+        version_label=base_order.version_label,
     )
 
     st.divider()
@@ -641,13 +684,15 @@ def _run_generation(want_spanish: bool) -> None:
             if drift_mode != "None":
                 # Scenario C never contacts models or alters upstream data.
                 baseline = orchestrator.generate(
-                    compose_clinical_text(raw_template, active_orders), active_orders,
+                    raw_template, active_orders, source_orders=base_order,
                     module_version=module_version, condition=condition,
+                    simplified_template_text=compose_clinical_text(raw_template, active_orders),
                 )
                 packet = inject_drift(baseline, drift_mode)
             else:
                 packet = orchestrator.generate_live(
-                    raw_template, active_orders, module_version=module_version, condition=condition,
+                    raw_template, active_orders, source_orders=base_order,
+                    module_version=module_version, condition=condition,
                     translate=want_spanish,
                 )
                 live_checked = True
@@ -711,9 +756,12 @@ st.markdown(
 packet: Optional[InstructionPacket] = st.session_state.get("current_packet")
 
 def _compose_original_preview_html(
-    orders: ClinicalOrders, template_text: str, template_version: str
+    orders: ClinicalOrders,
+    template_text: str,
+    template_version: str,
+    effective_orders: ClinicalOrders | None = None,
 ) -> str:
-    """Render source orders as a readable, escaped preview before generation."""
+    """Render immutable Team7 source and identify physician override fields."""
     medications = []
     for medication in orders.medications:
         details = " · ".join(
@@ -739,6 +787,34 @@ def _compose_original_preview_html(
         )
     medication_html = "".join(medications) or (
         "<div class='medication-preview'>No medications entered.</div>"
+    )
+
+    editable_labels = {
+        "patient_id": "MRN",
+        "age": "age",
+        "diagnosis": "diagnosis",
+        "weight_kg": "weight",
+        "medications": "medications",
+        "hydration_order": "hydration order",
+        "urgent_fever_threshold": "urgent fever threshold",
+        "emergency_fever_threshold": "emergency fever threshold",
+        "red_flag_symptoms": "red-flag symptoms",
+        "contraindications": "contraindications",
+        "daytime_phone": "daytime phone",
+        "after_hours_phone": "after-hours phone",
+        "emergency_phone": "emergency contact",
+    }
+    override_names = []
+    if effective_orders is not None:
+        override_names = [
+            label for field, label in editable_labels.items()
+            if getattr(orders, field) != getattr(effective_orders, field)
+        ]
+    override_html = (
+        "<div class='override-notice'><strong>Physician overrides applied:</strong> "
+        f"{escape(', '.join(override_names))}. Generation uses the overridden values; "
+        "the Team7 source below remains unchanged.</div>"
+        if override_names else ""
     )
 
     protocol_rows = []
@@ -770,6 +846,11 @@ def _compose_original_preview_html(
         f"<div class='clinical-field-row'><strong>Age</strong><span>{escape(orders.age)}</span></div>"
         if orders.age else ""
     )
+    weight_row = (
+        "<div class='clinical-field-row'><strong>Weight</strong>"
+        f"<span>{orders.weight_kg:g} kg</span></div>"
+        if orders.weight_kg is not None else ""
+    )
     safety_rows = "".join(
         f"<div class='clinical-field-row'><strong>{label}</strong><span>{escape(value)}</span></div>"
         for label, value in (
@@ -795,15 +876,41 @@ def _compose_original_preview_html(
         "<div class='clinical-section-title'>Contacts</div>" + contact_rows
         if contact_rows else ""
     )
+    hydration_section = (
+        "<div class='clinical-section-title'>Hydration Order</div>"
+        f"<div class='protocol-copy'>{escape(orders.hydration_order)}</div>"
+        if orders.hydration_order else ""
+    )
+    red_flags_section = (
+        "<div class='clinical-section-title'>Red Flag Symptoms</div>"
+        + "".join(
+            f"<div class='protocol-item'>• {escape(item)}</div>"
+            for item in orders.red_flag_symptoms
+        )
+        if orders.red_flag_symptoms else ""
+    )
+    contraindications_section = (
+        "<div class='clinical-section-title'>Contraindications</div>"
+        + "".join(
+            f"<div class='protocol-item'>• {escape(item)}</div>"
+            for item in orders.contraindications
+        )
+        if orders.contraindications else ""
+    )
     return (
         "<div class='clinical-orders-preview'>"
-        "<div class='clinical-preview-title'>Clinical Orders</div>"
+        "<div class='clinical-preview-title'>Team7 Source Clinical Orders</div>"
+        f"{override_html}"
         f"<div class='clinical-field-row'><strong>MRN</strong><span>{escape(orders.patient_id)}</span></div>"
         f"{age_row}"
         f"<div class='clinical-field-row'><strong>Diagnosis</strong><span>{escape(orders.diagnosis)}</span></div>"
+        f"{weight_row}"
         "<div class='clinical-section-title'>Medications</div>"
         f"{medication_html}"
+        f"{hydration_section}"
         f"{safety_section}"
+        f"{red_flags_section}"
+        f"{contraindications_section}"
         f"{contact_section}"
         "<div class='clinical-section-title'>Protocol Instructions "
         f"<span class='protocol-version'>{escape(template_version)}</span></div>"
@@ -828,7 +935,7 @@ if packet is None:
             )
     st.markdown(
         "<div class='clinical-box-full'>"
-        f"{_compose_original_preview_html(active_orders, live_templates[condition][module_version], module_version)}"
+        f"{_compose_original_preview_html(base_order, live_templates[condition][module_version], module_version, active_orders)}"
         "</div>",
         unsafe_allow_html=True,
     )
@@ -934,8 +1041,10 @@ else:
     if st.session_state.get("edits_checked_banner", False):
         st.info("**Edits re-evaluated and checked.** Status remains `PENDING`. Click **'Approve & publish'** when ready to finalize.")
 
+    source_orders = packet.source_clinical_orders or packet.clinical_orders
     original_source_html = _compose_original_preview_html(
-        packet.clinical_orders, packet.original_clinical_text, packet.module_version
+        source_orders, packet.original_clinical_text, packet.module_version,
+        packet.clinical_orders,
     )
 
     # ------------------------------------------------------------------

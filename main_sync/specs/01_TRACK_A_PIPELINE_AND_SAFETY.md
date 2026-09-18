@@ -19,9 +19,10 @@ Participant 1 owns the multi-LLM generation, translation, and safety verificatio
 ## 2. Component Specifications
 
 ### 2.1 Vetted English Composer (`pipeline/orchestrator.py`)
-- `compose_clinical_text` binds template placeholders and appends supplied structured order fields when required values are absent. It does not invent clinical instructions.
+- `compose_clinical_text` binds template placeholders and always appends every populated field in the effective `ClinicalOrders`: diagnosis, weight, medications and instructions, hydration, fever thresholds, red flags, contraindications, and contacts. It does not invent clinical instructions.
+- The effective order begins as a copy of the Team7 source order and may contain explicit physician overrides. `InstructionPacket.source_clinical_orders` retains an independent immutable snapshot of the Team7 order; `InstructionPacket.clinical_orders` records the effective values actually sent through generation and safety checks.
 - LLM1 receives the simplification rule: “Change the language, not the information. Preserve every instruction, fact, condition, exception, warning, and clinical value.” It targets FKGL 5.0–6.9 after restoration and retries from the original composed source with score feedback at most three times. If the target remains unmet, retain the third simplified draft with its actual score, finish the requested checks, mark it for review, and block approval.
-- Inputs: versioned clinical source and `ClinicalOrders`; output: `simplified_en` (LLM1 plain-language English for clinician review).
+- Inputs: versioned Team7 module source and effective `ClinicalOrders`; output: `simplified_en` (LLM1 plain-language English for clinician review).
 - Target FKGL is 5.0–6.9 inclusive. Manual edits are not automatically rewritten; live rechecking measures them and an out-of-range score blocks approval.
 
 ### 2.2 Automated Quality Gate (`pipeline/evaluator.py`)

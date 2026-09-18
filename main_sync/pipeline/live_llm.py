@@ -54,18 +54,29 @@ def _chat(
 
 
 def format_orders(orders: ClinicalOrders) -> str:
-    """Render only the structured fields an LLM needs to preserve verbatim."""
+    """Render the complete effective order record supplied to generation."""
     lines = [f"Diagnosis: {orders.diagnosis}"]
+    if orders.weight_kg is not None:
+        lines.append(f"Weight: {orders.weight_kg:g} kg")
     for med in orders.medications:
         lines.append(
             f"Medication: {med.name} | Dose: {med.dose} | Route: {med.route} | "
             f"Frequency: {med.frequency} | Notes: {med.special_instructions or ''}"
         )
-    lines.append(f"Urgent fever threshold: {orders.urgent_fever_threshold}")
-    lines.append(f"Emergency fever threshold: {orders.emergency_fever_threshold}")
-    lines.append(f"Daytime phone: {orders.daytime_phone}")
-    lines.append(f"After-hours phone: {orders.after_hours_phone}")
-    lines.append(f"Emergency phone: {orders.emergency_phone}")
+    if orders.hydration_order:
+        lines.append(f"Hydration: {orders.hydration_order}")
+    if orders.urgent_fever_threshold:
+        lines.append(f"Urgent fever threshold: {orders.urgent_fever_threshold}")
+    if orders.emergency_fever_threshold:
+        lines.append(f"Emergency fever threshold: {orders.emergency_fever_threshold}")
+    lines.extend(f"Red flag: {item}" for item in orders.red_flag_symptoms)
+    lines.extend(f"Contraindication: {item}" for item in orders.contraindications)
+    if orders.daytime_phone:
+        lines.append(f"Daytime phone: {orders.daytime_phone}")
+    if orders.after_hours_phone:
+        lines.append(f"After-hours phone: {orders.after_hours_phone}")
+    if orders.emergency_phone:
+        lines.append(f"Emergency contact: {orders.emergency_phone}")
     return "\n".join(lines)
 
 

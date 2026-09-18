@@ -476,9 +476,14 @@ def adapt_orders(raw: Dict[str, Any]) -> Dict[str, ClinicalOrders]:
         fields: Dict[str, Any] = {
             "patient_id": record.get("patient_synthetic_id", ""),
             "diagnosis": record.get("diagnosis", ""),
+            "weight_kg": record.get("weight_kg"),
             "medications": medications,
+            "hydration_order": record.get("hydration_order", ""),
+            "red_flag_symptoms": list(record.get("red_flag_symptoms") or []),
+            "contraindications": list(record.get("contraindications") or []),
             "order_id": record.get("order_id", ""),
             "order_version": record_version,
+            "version_label": record.get("version_label", ""),
             # Remote Team7 data is authoritative. Explicit blanks prevent
             # canonical demo defaults from becoming clinical source content.
             "urgent_fever_threshold": "",
@@ -499,49 +504,6 @@ def adapt_orders(raw: Dict[str, Any]) -> Dict[str, ClinicalOrders]:
     if not adapted:
         raise ValueError("Upstream orders payload contained no usable records.")
     return adapted
-
-
-def merge_order_safety_sections(
-    modules: Dict[str, Dict[str, str]], raw_orders: Dict[str, Any]
-) -> Dict[str, Dict[str, str]]:
-    """Append hydration and red-flag wording that has no canonical schema field.
-
-    `hydration_order` and `red_flag_symptoms[]` are safety-critical vetted text
-    that `ClinicalOrders` cannot carry, so they are bound into the composed
-    template text instead of being dropped. Text is copied verbatim.
-    """
-    current_version = raw_orders.get("version") or ""
-    by_category: Dict[str, Dict[str, Any]] = {}
-    chosen_version: Dict[str, str] = {}
-    for record in raw_orders.get("synthetic_orders") or []:
-        category = record.get("category")
-        if not category:
-            continue
-        record_version = record.get("version", "")
-        if category in by_category and not (
-            record_version == current_version and chosen_version.get(category) != current_version
-        ):
-            continue
-        by_category[category] = record
-        chosen_version[category] = record_version
-
-    merged: Dict[str, Dict[str, str]] = {}
-    for category, versioned in modules.items():
-        record = by_category.get(category)
-        extra_blocks: List[str] = []
-        if record:
-            hydration = record.get("hydration_order")
-            if hydration:
-                extra_blocks.append(f"=== HYDRATION PLAN ===\n- {hydration}")
-            red_flags = record.get("red_flag_symptoms") or []
-            if red_flags:
-                body = "\n".join(f"- {flag}" for flag in red_flags)
-                extra_blocks.append(f"=== RED FLAG SYMPTOMS ===\n{body}")
-        suffix = ("\n\n" + "\n\n".join(extra_blocks)) if extra_blocks else ""
-        merged[category] = {
-            version: text + suffix for version, text in versioned.items()
-        }
-    return merged
 
 
 def fetch_remote_templates_and_orders(
@@ -579,7 +541,7 @@ def fetch_remote_templates_and_orders(
         modules_raw = parse_json_tolerantly(modules_json, warnings, "modules")
         orders_raw = parse_json_tolerantly(orders_json, warnings, "orders")
 
-        modules = merge_order_safety_sections(adapt_modules(modules_raw), orders_raw)
+        modules = adapt_modules(modules_raw)
         orders = adapt_orders(orders_raw)
 
         _LAST_LOAD_STATUS.update({
