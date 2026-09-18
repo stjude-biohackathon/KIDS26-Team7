@@ -216,6 +216,9 @@ def describe_model_error(alias: str, exc: Exception) -> str:
     name = type(exc).__name__
     if isinstance(exc, ModelConfigurationError):
         return f"{alias}: no endpoint or credentials configured for this model alias."
+    from pipeline.evaluator import ReadabilityTargetError
+    if isinstance(exc, ReadabilityTargetError):
+        return f"{alias}: FKGL remains {exc.score:.2f} after {exc.attempts} attempts; required range is 5.0–6.9. Retry generation or revise the source."
     from pipeline.protection import ProtectionError
     if isinstance(exc, ProtectionError):
         return f"{alias}: protected clinical values were not preserved; translation was rejected."

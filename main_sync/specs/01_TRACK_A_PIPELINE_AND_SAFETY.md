@@ -8,7 +8,7 @@
 
 ## 1. Responsibilities & Objectives
 Participant 1 owns the multi-LLM generation, translation, and safety verification engine:
-1. **Vetted English Composition**: Binds supplied versioned wording and structured orders. English clinical prose is never rewritten by AI; clinicians provide/edit plain-language wording.
+1. **Vetted English Composition**: Binds supplied versioned wording and structured orders. LLM1 then simplifies English while preserving clinical facts and protected values.
 2. **Automated Quality Gate**: Measures FKGL readability via `textstat` and validates verbatim preservation of critical numbers using regex.
 3. **LLM2 Safety Judge**: Performs zero-shot safety audit checking for factual drift, omitted red flags, and dangerous contradictions.
 4. **Dual Translation**: Forward translation to Spanish (LLM1) and back-translation to English (LLM2) to expose translation drift.
@@ -20,14 +20,14 @@ Participant 1 owns the multi-LLM generation, translation, and safety verificatio
 
 ### 2.1 Vetted English Composer (`pipeline/orchestrator.py`)
 - `compose_clinical_text` binds template placeholders and appends supplied structured order fields when required values are absent. It does not invent clinical instructions.
-- LLM1 is used for protected Spanish translation only. The former AI simplifier entry point fails explicitly.
-- Inputs: versioned clinical source and `ClinicalOrders`; output: `simplified_en` (legacy schema name for the reviewed English pane).
-- Target FKGL remains 5.0–6.9. Source authors/clinician edits must achieve it; generation does not promise a reading level automatically.
+- LLM1 performs protected English simplification followed by protected Spanish translation. English must measure FKGL 5.0–6.9 after restoration. Retry from the original composed source with score feedback, at most three attempts; an unmet target raises an explicit readability error before translation.
+- Inputs: versioned clinical source and `ClinicalOrders`; output: `simplified_en` (LLM1 plain-language English for clinician review).
+- Target FKGL is 5.0–6.9 inclusive. Manual edits are not automatically rewritten; live rechecking measures them and an out-of-range score blocks approval.
 
 ### 2.2 Automated Quality Gate (`pipeline/evaluator.py`)
 - **Readability Metric**:
   - Implementation: `textstat.flesch_kincaid_grade(text)`.
-  - Pass Criteria: Target 5.0 – 6.9 (flag if > 7.0 or < 4.0).
+  - Pass Criteria: Finite score in 5.0–6.9 inclusive; anything outside this range blocks approval.
 - **Verbatim Lock Extractor**:
   - Medication doses: Regex `r"(\d+(?:\.\d+)?\s*(?:mg|mL|mcg|g|tablets?|capsules?|drops?))"`
   - Temperature thresholds: Regex `r"(\d{2,3}(?:\.\d+)?\s*°?[FC])"`
@@ -73,9 +73,9 @@ Provides 4 selectable synthetic error injections, operating on independent revis
 No matching value/warning means the requested injection fails explicitly. Packets are marked `is_simulation`, retain parent revision identity, and cannot be approved. Tests inspect content changes, not merely the scenario label.
 
 ### 2.7 Protection and Final Safety Vetoes
-- Translation/back-translation inputs mask numeric values and associated units before model calls. Restoration requires the exact sentinel multiset and rejects invented numbers.
+- Simplification/translation/back-translation inputs mask numeric values and associated units before model calls. Restoration requires the exact sentinel multiset and rejects invented numbers.
 - Judge inputs are masked too; complete typed audit fields are required. Invalid, incomplete, or unavailable audits yield `FLAGGED_FOR_REVIEW`.
-- Required values must survive in English, Spanish, and back-translation. Additional unsupplied doses/thresholds/phone numbers and removed exact English source-warning lines block approval even if the judge says PASS.
+- Required values must survive in English, Spanish, and back-translation. Additional unsupplied doses/thresholds/phone numbers and out-of-range FKGL block approval even if the judge says PASS. Warnings may be rephrased; the judge checks their meaning and reported omissions or contradictions block approval regardless of verdict.
 - These conservative checks do not certify clinical meaning. Authorized Spanish review remains a separate per-revision human attestation.
 
 ---

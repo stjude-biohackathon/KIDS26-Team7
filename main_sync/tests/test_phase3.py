@@ -89,13 +89,13 @@ class ProtectedModelTests(unittest.TestCase):
             client.chat.completions.create.return_value.choices=[MagicMock(message=MagicMock(content=output))]
             with self.assertRaises(ValueError): translate_to_spanish(client,'synthetic','Give 280 mg.')
 
-    def test_live_english_is_bound_source_not_model_rewrite(self):
+    def test_live_english_is_simplified_before_translation(self):
         from pipeline.orchestrator import PipelineOrchestrator
         from schemas.instruction_packet import SafetyJudgeResult
         orders=packet().clinical_orders
-        with patch('pipeline.orchestrator.get_client',return_value=(object(),'test')), patch('pipeline.live_llm.simplify_to_plain_language',side_effect=AssertionError('No rewriting')), patch('pipeline.live_llm.translate_to_spanish',side_effect=lambda c,m,t:t), patch('pipeline.live_llm.back_translate_to_english',side_effect=lambda c,m,t:t), patch('pipeline.live_llm.judge_safety',return_value=SafetyJudgeResult(overall_verdict='PASS')):
+        with patch('pipeline.orchestrator.get_client',return_value=(object(),'test')), patch('pipeline.live_llm.simplify_to_plain_language',side_effect=lambda c,m,t,o,**kwargs:t.replace('Use','Give')), patch('pipeline.evaluator.textstat.flesch_kincaid_grade',return_value=5.8), patch('pipeline.live_llm.translate_to_spanish',side_effect=lambda c,m,t:t), patch('pipeline.live_llm.back_translate_to_english',side_effect=lambda c,m,t:t), patch('pipeline.live_llm.judge_safety',return_value=SafetyJudgeResult(overall_verdict='PASS')):
             result=PipelineOrchestrator().generate_live('Use ${medication_0_dose}.',orders,module_version='v1',condition='synthetic')
-            self.assertIn('Use 280 mg.',result.simplified_en)
+            self.assertIn('Give 280 mg.',result.simplified_en)
 
 class RejectionTests(unittest.TestCase):
     def test_rejection_requires_reason_and_preserves_original(self):
@@ -144,7 +144,7 @@ def phase3_app():
         return MagicMock(choices=[MagicMock(message=MagicMock(content=text))])
     client.chat.completions.create.side_effect=reply
     st.cache_data.clear()
-    with patch('streamlit.secrets',{}), patch('storage.github_loader.fetch_remote_templates_and_orders',side_effect=load_mock_templates_and_orders), patch('storage.github_loader.get_last_load_status',return_value={'source':'mock','error':None,'warnings':[]}), patch('pipeline.orchestrator.get_client',return_value=(client,'synthetic')), patch('requests.sessions.Session.request',side_effect=AssertionError('No network')):
+    with patch('pipeline.evaluator.textstat.flesch_kincaid_grade',return_value=5.8), patch('streamlit.secrets',{}), patch('storage.github_loader.fetch_remote_templates_and_orders',side_effect=load_mock_templates_and_orders), patch('storage.github_loader.get_last_load_status',return_value={'source':'mock','error':None,'warnings':[]}), patch('pipeline.orchestrator.get_client',return_value=(client,'synthetic')), patch('requests.sessions.Session.request',side_effect=AssertionError('No network')):
         yield client
     st.cache_data.clear()
 
@@ -162,7 +162,6 @@ class Phase3WorkflowTests(unittest.TestCase):
         for condition in ['sickle_cell_pain','fever_neutropenia','chemo_nausea_hydration']:
             with self.subTest(condition=condition), phase3_app():
                 at=self.app()
-                at.radio[0].set_value('Live').run()
                 next(s for s in at.selectbox if s.label=='Clinical Module:').select(condition).run()
                 click(at,'Generate Instructions')
                 self.assertEqual(len(at.exception),0)
@@ -213,7 +212,7 @@ class Phase3WorkflowTests(unittest.TestCase):
 
     def test_separate_app_sessions_do_not_share_reviews(self):
         with phase3_app():
-            at=self.app(); at.radio[0].set_value('Live').run()
+            at=self.app()
             click(at,'Generate Instructions'); at.checkbox[0].check().run(); click(at,'Approve & Publish')
             self.assertEqual(len(at.session_state['review_library'].records()),1)
             other=self.app()
@@ -234,11 +233,11 @@ class FinalSafetyGateTests(unittest.TestCase):
         p.evaluation_metrics=EvaluationMetrics(fkgl_score=5.8,safety_judge=SafetyJudgeResult(overall_verdict='PASS'))
         self.assertTrue(approval_blockers(p,p.simplified_en,p.model_dump(mode='json'),True))
 
-    def test_omitted_source_warning_blocks_even_if_judge_passes(self):
+    def test_reported_omitted_warning_blocks_even_with_pass_verdict(self):
         from app.review import approval_blockers
         from schemas.instruction_packet import EvaluationMetrics, SafetyJudgeResult
         p=packet(); p.simplified_en=p.simplified_en.split('\n')[0]
-        p.evaluation_metrics=EvaluationMetrics(fkgl_score=5.8,safety_judge=SafetyJudgeResult(overall_verdict='PASS'))
+        p.evaluation_metrics=EvaluationMetrics(fkgl_score=5.8,safety_judge=SafetyJudgeResult(overall_verdict='PASS',omitted_red_flags=['Missing warning']))
         self.assertTrue(approval_blockers(p,p.simplified_en,p.model_dump(mode='json'),True))
 
 class WorkflowFailureTests(unittest.TestCase):
@@ -249,7 +248,7 @@ class WorkflowFailureTests(unittest.TestCase):
     def test_live_generation_failure_does_not_substitute_a_mock_packet(self):
         with phase3_app() as client:
             client.chat.completions.create.side_effect=RuntimeError('Synthetic outage')
-            at=self.app(); at.radio[0].set_value('Live').run()
+            at=self.app()
             click(at,'Generate Instructions')
             self.assertEqual(len(at.exception),0)
             self.assertIsNone(at.session_state['current_packet'])

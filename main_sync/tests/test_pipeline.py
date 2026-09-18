@@ -188,12 +188,21 @@ class MockPipelineTests(unittest.TestCase):
 
 class LivePipelineTests(unittest.TestCase):
     """Exercise the real pipeline against synthetic model transport responses."""
+    def setUp(self):
+        # Gate routing is tested at a fixed passing score; real FKGL arithmetic
+        # and bounded retry behavior have independent regression coverage.
+        scoring = patch('pipeline.evaluator.textstat.flesch_kincaid_grade', return_value=5.8)
+        scoring.start()
+        self.addCleanup(scoring.stop)
+
     def clients(self, judge_response=None, drop_translation=False):
         llm1, llm2 = MagicMock(), MagicMock()
         def forward(**kwargs):
             content = kwargs['messages'][1]['content']
             self.assertNotIn('5 mg', content)
-            text = 'Dropped protected value.' if drop_translation else 'ES: ' + content
+            text = 'Dropped protected value.' if drop_translation else (
+                content.replace('Administer', 'Give') if 'Simplify the supplied' in kwargs['messages'][0]['content'] else 'ES: ' + content
+            )
             return MagicMock(choices=[MagicMock(message=MagicMock(content=text))])
         def back_or_judge(**kwargs):
             content = kwargs['messages'][1]['content']
@@ -207,16 +216,16 @@ class LivePipelineTests(unittest.TestCase):
         llm2.chat.completions.create.side_effect = back_or_judge
         return llm1, llm2, patch('pipeline.orchestrator.get_client', side_effect=lambda alias: (llm1 if alias=='gpt52' else llm2,'synthetic'))
 
-    def test_live_pipeline_preserves_supplied_english_and_routes_both_models(self):
+    def test_live_pipeline_simplifies_english_and_routes_both_models(self):
         orders=synthetic_orders(medications=[MedicationOrder(name='Demo',dose='5 mg')])
         first,second,context=self.clients()
         with context:
             result=PipelineOrchestrator().generate_live('Administer 5 mg orally daily.',orders,module_version='v1',condition='demo')
-        self.assertEqual(result.simplified_en,'Administer 5 mg orally daily.')
-        self.assertEqual(result.translated_es,'ES: Administer 5 mg orally daily.')
+        self.assertEqual(result.simplified_en,'Give 5 mg orally daily.')
+        self.assertEqual(result.translated_es,'ES: Give 5 mg orally daily.')
         self.assertEqual(result.back_translated_en,result.simplified_en)
         self.assertEqual(result.evaluation_metrics.safety_judge.overall_verdict,'PASS')
-        self.assertEqual(first.chat.completions.create.call_count,1)
+        self.assertEqual(first.chat.completions.create.call_count,2)
         self.assertEqual(second.chat.completions.create.call_count,2)
         self.assertEqual(result.status,'PENDING')
 

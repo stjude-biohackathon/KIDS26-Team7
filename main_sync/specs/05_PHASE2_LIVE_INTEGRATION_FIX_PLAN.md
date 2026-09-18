@@ -164,6 +164,8 @@ Add two pure, unit-testable functions:
   result only by the file's actual `version`. Phase 3 correction: historical
   metadata without archived content must not relabel current wording; selectors
   now derive their choices from the actual loaded content.
+  The downstream LLM1 stage simplifies the composed English to measured FKGL 5.0–6.9 with protected values (up to three attempts), then translates it. This does not change the composer’s binding-only responsibility.
+
   The composer **binds and orders vetted text only — it must not rewrite,
   paraphrase, or generate clinical prose** (Zero AI-Originated Clinical Prose).
 - `adapt_orders(raw: dict) -> Dict[str, ClinicalOrders]`

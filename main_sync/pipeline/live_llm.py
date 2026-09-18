@@ -14,6 +14,16 @@ from pipeline.protection import ProtectedText
 
 from schemas.instruction_packet import ClinicalOrders, SafetyJudgeResult
 
+_SIMPLIFY_SYSTEM_PROMPT = (
+    "Simplify the supplied clinical instructions into plain English for parents. "
+    "Target a measured Flesch-Kincaid Grade Level (FKGL) between 5.0 and 6.9. "
+    "Use familiar words, active voice, and short sentences, ideally under 15 words. "
+    "Use unnumbered bullets. Preserve every clinical fact, medication name, route, "
+    "frequency, warning sign, action, condition, and contact instruction. "
+    "Do not add facts or advice, weaken urgency, or drop information to lower readability. "
+    "Preserve every protected marker exactly and return only the simplified instructions."
+)
+
 _TRANSLATE_ES_SYSTEM_PROMPT = (
     "You are a medical translator producing accessible Latin American Spanish "
     "for pediatric discharge instructions written for parents. Translate the "
@@ -34,7 +44,7 @@ _BACK_TRANSLATE_SYSTEM_PROMPT = (
 _SAFETY_JUDGE_SYSTEM_PROMPT = (
     "You are an independent pediatric clinical safety auditor. Compare the "
     "original clinical text and structured orders against the simplified "
-    "English instructions. Identify any factual drift, omitted red-flag "
+    "English instructions. Wording may change; compare clinical meaning, not exact sentences. Identify any factual drift, omitted red-flag "
     "warnings, or contradictory advice. Respond with ONLY a JSON object "
     "matching this schema, with no surrounding text: "
     '{"overall_verdict": "PASS|NEEDS_REVIEW|FLAGGED_FOR_REVIEW", '
@@ -79,9 +89,14 @@ def format_orders(orders: ClinicalOrders) -> str:
     return "\n".join(lines)
 
 
-def simplify_to_plain_language(client, deployment: str, composite_template_text: str, orders: ClinicalOrders) -> str:
+def simplify_to_plain_language(client, deployment: str, composite_template_text: str, orders: ClinicalOrders, *, previous_fkgl: float | None = None) -> str:
     """LLM1: rewrite the clinical text at a 5th-6th grade level."""
-    raise ValueError("AI rewriting of clinical English is disabled; use supplied versioned wording.")
+    protected = ProtectedText(composite_template_text)
+    prompt = _SIMPLIFY_SYSTEM_PROMPT
+    if previous_fkgl is not None:
+        direction = "shorter sentences and simpler vocabulary" if previous_fkgl > 6.9 else "slightly fuller sentences while keeping familiar vocabulary"
+        prompt += f" A previous attempt scored FKGL {previous_fkgl:.2f}; use {direction} to reach 5.0–6.9. Preserve all information."
+    return protected.restore(_chat(client, deployment, prompt, protected.masked))
 
 
 def translate_to_spanish(client, deployment: str, simplified_en: str) -> str:

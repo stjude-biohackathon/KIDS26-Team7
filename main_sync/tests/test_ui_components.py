@@ -11,6 +11,7 @@ from contextlib import ExitStack, contextmanager
 from unittest.mock import patch
 
 from app.mock_components import (
+    MOCK_MODULES,
     ClinicalOrders,
     EvaluationMetrics,
     InstructionPacket,
@@ -44,6 +45,14 @@ def offline_app(load_status=None, modules=None):
     def _unavailable(*_args, **_kwargs):
         raise RuntimeError("Live model call disabled in unit tests.")
 
+    def _synthetic_generation(_self, source, orders, *, condition, module_version):
+        # A synthetic live-service boundary for structural UI tests only.
+        if condition in MOCK_MODULES and module_version in MOCK_MODULES[condition]:
+            return run_mock_pipeline(condition, module_version, orders)
+        from pipeline.orchestrator import PipelineOrchestrator
+        return PipelineOrchestrator().generate(source, orders, condition=condition, module_version=module_version)
+
+
     st.cache_data.clear()
     with ExitStack() as stack:
         stack.enter_context(
@@ -59,7 +68,7 @@ def offline_app(load_status=None, modules=None):
         stack.enter_context(
             patch(
                 "pipeline.orchestrator.PipelineOrchestrator.generate_live",
-                _unavailable,
+                _synthetic_generation,
             )
         )
         stack.enter_context(

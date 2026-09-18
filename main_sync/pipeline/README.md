@@ -13,7 +13,7 @@ The test runner uses synthetic fixtures and mocked external service boundaries. 
 
 `PipelineOrchestrator.generate()` binds supplied templates and order values without a model call. Optional supplied Spanish/back-translation templates support offline demonstrations. Missing translations remain unavailable.
 
-`generate_live()` composes English from versioned source wording and structured orders, then calls LLM1 for Spanish and LLM2 for back-translation and safety judgment. It never asks a model to rewrite clinical English. Achieving the FKGL target depends on vetted source wording or clinician edits.
+`generate_live()` composes source English and orders, then calls LLM1 to simplify protected English. It measures restored-text FKGL and retries from the source up to three times with score feedback to reach 5.0–6.9. Unmet targets stop generation explicitly before translation. LLM1 translates the passing text into Spanish; LLM2 back-translates and judges safety. Normal UI generation always uses this live path; offline helpers remain for tests and local simulations only.
 
 `pipeline/protection.py` masks numeric values and units before translation and judge calls. Translation output must preserve every sentinel and occurrence count. Missing/changed/extra sentinels and invented numbers fail explicitly. Judge outages, incomplete audit objects, and invalid verdicts become `FLAGGED_FOR_REVIEW`.
 
@@ -21,7 +21,7 @@ The test runner uses synthetic fixtures and mocked external service boundaries. 
 
 ## Safety and Scenario C
 
-One canonical evaluator measures FKGL and exact protected-value preservation. Approval checks all output panes, rejects additional unsupplied safety values, and conservatively requires exact English source-warning lines. These checks cannot certify clinical semantics; human review remains necessary.
+One canonical evaluator measures FKGL and exact protected-value preservation. Approval checks all output panes, rejects additional unsupplied safety values, and requires FKGL 5.0–6.9 and no judge-reported omissions or contradictions; warning wording may change while meaning must survive. These checks cannot certify clinical semantics; human review remains necessary.
 
 `pipeline/drift.py` operates on synthetic copies only:
 

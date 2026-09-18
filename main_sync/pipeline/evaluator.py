@@ -8,6 +8,21 @@ import textstat
 from schemas.instruction_packet import ClinicalOrders, EvaluationMetrics, SafetyJudgeResult
 
 
+FKGL_MIN = 5.0
+FKGL_MAX = 6.9
+
+
+def fkgl_passes(score: float) -> bool:
+    return math.isfinite(score) and FKGL_MIN <= score <= FKGL_MAX
+
+
+class ReadabilityTargetError(ValueError):
+    def __init__(self, score: float, attempts: int):
+        self.score = score
+        self.attempts = attempts
+        super().__init__(f"FKGL target 5.0–6.9 was not met after {attempts} attempts (last score {score:.2f}).")
+
+
 _DOSE_RE = re.compile(r"\d+(?:\.\d+)?\s*(?:mg|mL|mcg|g|tablets?|capsules?|drops?)\b")
 # A product strength such as "100 mg/5 mL" is one value, not two. Splitting it
 # would also produce tokens check_verbatim can never match, because it refuses

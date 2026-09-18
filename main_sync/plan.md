@@ -6,7 +6,7 @@
 ## 1. Executive Summary & Objectives
 
 ### Purpose
-Build and demonstrate a clinician-in-the-loop prototype using supplied, versioned clinical English and structured orders to produce bilingual (English & Spanish) handouts. English wording is composed deterministically, never rewritten by AI. Clinician-vetted plain-language source content targets **5th–6th grade reading level**; actual FKGL and protected-value checks are displayed for review.
+Build and demonstrate a clinician-in-the-loop prototype using supplied, versioned clinical English and structured orders to produce bilingual (English & Spanish) handouts. The composer binds vetted source wording and orders, then LLM1 simplifies English to **FKGL 5.0–6.9**, measured after protected values are restored. Generation allows three attempts and fails explicitly if the benchmark is unmet. Translation follows a passing candidate; safety judgment and clinician approval remain mandatory.
 
 ### Key Success Metrics for the 2-Day Demo
 1. **End-to-End Execution across 3 Core Modules**:
@@ -36,10 +36,10 @@ Build and demonstrate a clinician-in-the-loop prototype using supplied, versione
                       │
                       ▼
          ┌─────────────────────────┐
+         │ LLM1: Simplify English  │
          │ Automated Quality Gate  │
          │  1. Readability (FKGL)  │
          │  2. Verbatim Extractor  │
-         │  3. LLM 2 Judge (Drift) │
          └────────────┬────────────┘
                       │
                       ▼
@@ -54,6 +54,7 @@ Build and demonstrate a clinician-in-the-loop prototype using supplied, versione
                       │
                       ▼
          ┌─────────────────────────┐
+         │ LLM2: Safety Judge      │
          │ Clinician Review UI     │
          │ • Original vs Simple    │
          │ • ES vs Back-Trans EN   │
@@ -106,8 +107,8 @@ The project progresses through 4 iterative synchronization points:
 |---|---|---|---|---|---|
 | **Phase 0** | Contract & Scaffolding | Pipeline interface stubs & test harness | Pydantic data schemas & test data mocks | Streamlit shell & component mocks | **Sync Point 0**: Merge `schemas/` and test runners; verify all mocks validate against schema. |
 | **Phase 1** | Mock End-to-End Loop | Mock orchestrator (rule-based simplifier, FKGL, verbatim check) | Mock in-memory data loader + session review snapshots | 4-pane comparative review UI wired to mock orchestrator | **Sync Point 1**: Merge branches to `main`; smoke test end-to-end packet generation and review loop. |
-| **Phase 2** | Live Integrations | Vetted English composition + protected LLM1 ES / LLM2 judge and back-EN | Live in-memory GitHub App REST loader (zero-disk) | Dynamic model dropdowns + protocol version selectors | **Sync Point 2**: Merge to `main`; integration test with live GitHub App streaming and live LLM calls. |
-| **Phase 3** | UX Hardening & Exporters | Four synthetic drift scenarios, sentinel restoration, deterministic safety vetoes | Session-isolated immutable reviews; multipage bilingual PDFs with review badges | Current-revision approval, recheck, rejection, explicit Offline/Live modes, no UI emojis | Software acceptance implemented and tested across all three conditions. **Sync Point 3 clinical/live-service validation and merge remain pending.** |
+| **Phase 2** | Live Integrations | Source composition + protected LLM1 English simplification and ES / LLM2 judge and back-EN | Live in-memory GitHub App REST loader (zero-disk) | Dynamic model dropdowns + protocol version selectors | **Sync Point 2**: Merge to `main`; integration test with live GitHub App streaming and live LLM calls. |
+| **Phase 3** | UX Hardening & Exporters | Four synthetic drift scenarios, sentinel restoration, deterministic safety vetoes | Session-isolated immutable reviews; multipage bilingual PDFs with review badges | Current-revision approval, recheck, rejection, live generation without an Offline/Live selector, no UI emojis | Software acceptance implemented and tested across all three conditions. **Sync Point 3 clinical/live-service validation and merge remain pending.** |
 
 ---
 
@@ -115,7 +116,7 @@ The project progresses through 4 iterative synchronization points:
 
 ### Track A: Pipeline, Quality Gate & Safety Judge (Participant 1)
 - **Component 1 (Vetted English Composer)**:
-  - Binds supplied versioned wording and structured order values without AI rewriting. Clinicians provide plain-language source or edit English; FKGL measures the result instead of inventing a successful score.
+  - Binds supplied versioned wording and orders, then LLM1 simplifies English with protected values. Measure actual restored-text FKGL; retry from the source with score feedback up to three attempts to reach 5.0–6.9. Failure stops generation before translation. Clinician edits are rechecked, never silently rewritten, and must meet the same approval benchmark.
 - **Component 2 (Automated Quality Gate)**:
   - Readability score evaluator using `textstat` (FKGL target 5.0–6.9).
   - Verbatim lock regex extractor ensuring medication dosages, temperature thresholds, and clinic phone numbers are unrounded and unparaphrased.
@@ -126,7 +127,7 @@ The project progresses through 4 iterative synchronization points:
   - Forward Spanish translation (LLM1) and back-translation to English (LLM2) to expose semantic drift.
 - **Component 5 (Scenario C Drift Simulator)**:
   - Injects doubled doses, altered fever thresholds, contradictory advice, and omitted source warnings into independent synthetic revisions. Deterministic evaluation inspects actual changes. Simulation packets cannot be approved for patient use.
-  - Model inputs mask numeric values and units with sentinels; translation restoration rejects missing, duplicated, unknown markers and invented numeric values. Incomplete/malformed judge audits are flagged. Exact English source-warning and new-value checks can veto a passing model judge.
+  - Model inputs mask numeric values and units with sentinels; translation restoration rejects missing, duplicated, unknown markers and invented numeric values. Incomplete/malformed judge audits are flagged. New-value and FKGL checks can veto a passing model judge. Warning meaning is checked by the judge and clinician, allowing legitimate rephrasing; reported omissions block approval even with a PASS verdict.
 
 ### Track B: In-Memory Data Loader, Storage & PDF Exporter (Participant 2)
 - **Component 1 (Canonical Contract)**:
@@ -142,7 +143,7 @@ The project progresses through 4 iterative synchronization points:
 
 ### Track C: Clinician Review UI/UX Dashboard (Participant 3)
 - **Component 1 (Sidebar Controls)**:
-  - Explicit Offline demo / Live generation selection. Live translation failures do not substitute a mock packet; offline fixtures never claim model safety approval.
+  - Normal generation always uses the live simplification/translation pipeline; no Offline/Live selector is shown. Live failures do not substitute a mock packet. Local synthetic drift simulations remain available and cannot be approved.
   - AI Model selectors for LLM1 Spanish and LLM2 judge/back-translation (supporting `gpt52`, `gpt4o`, `gpt56luna`, `kimik3`, `copus5`, `local1`, `local2`).
   - Protocol and module-version choices come from loaded content and matching orders. Order-set selection shows the actual version and ID exposed by the loader (currently one order set per condition). History labels without archived content are not selectable.
   - Data source indicator badge and cache refresh button (`🔄`).
@@ -174,6 +175,6 @@ The following specification documents are maintained in `specs/`:
 ## Phase 3 Verification Status
 
 Run from `main_sync`: `../.venv/bin/python -B tests/run_suite.py` (or the installed environment's Python).
-Verified on this iteration: **129 automated tests passed**, all 29 Python files passed syntax checks, and `git diff --check` was clean. The suite uses synthetic fixtures and mocked external transports, blocks network requests/user-secret reads, and prohibits JSONL file access. It covers all three conditions and review outcomes, revision freshness, session isolation, drift injections, protected translation, and long PDF exports.
+Verified on this iteration: **135 automated tests passed**, Python syntax checks passed, and `git diff --check` was clean. The suite uses synthetic fixtures and mocked external transports, blocks network requests/user-secret reads, and prohibits JSONL file access. It covers all three conditions and review outcomes, revision freshness, session isolation, drift injections, protected translation, and long PDF exports.
 
-No live GitHub/model acceptance, authorized clinical validation, or merge has been performed. Spanish sign-off is a recorded reviewer attestation; credential authentication remains outside this prototype. Exact English warning-line checks are conservative guards, not a substitute for semantic clinical review.
+No live GitHub/model acceptance, authorized clinical validation, or merge has been performed. Spanish sign-off is a recorded reviewer attestation; credential authentication remains outside this prototype. Warning preservation is assessed semantically by the safety judge and clinician; exact source-sentence matching is not required after simplification.

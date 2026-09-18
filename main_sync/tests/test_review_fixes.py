@@ -85,7 +85,6 @@ class CheckedApprovalTests(unittest.TestCase):
 
     def launch(self):
         at = AppTest.from_file(APP).run()
-        at.radio[0].set_value('Live').run()
         next(b for b in at.button if 'Generate Instructions' in b.label).click().run()
         return at
 

@@ -1,7 +1,7 @@
 """Approval checks shared by the review UI and its regression tests."""
 import math
 
-from pipeline.evaluator import check_verbatim, content_findings
+from pipeline.evaluator import check_verbatim, content_findings, fkgl_passes
 from schemas.instruction_packet import InstructionPacket
 
 
@@ -17,14 +17,15 @@ def approval_blockers(packet: InstructionPacket, edited_text: str, checked_packe
         reasons.append('Run Save & Check Edits successfully on the current text before approval.')
     from pipeline.orchestrator import compose_clinical_text
     source = compose_clinical_text(packet.original_clinical_text, packet.clinical_orders) if packet.original_clinical_text.strip() else ""
-    missing_warnings, new_values = content_findings(source, edited_text, packet.clinical_orders)
-    if missing_warnings:
-        reasons.append('Required source warning text was removed or changed; retain it or revise the vetted source.')
+    # The safety judge checks warning meaning; simplified wording need not match source lines.
+    _, new_values = content_findings(source, edited_text, packet.clinical_orders)
     if new_values:
         reasons.append('Instructions contain clinical values not supplied by the source or orders.')
     metrics = packet.evaluation_metrics
     if metrics is None or not math.isfinite(metrics.fkgl_score):
         reasons.append('Readability evaluation is unavailable.')
+    if metrics is not None and not fkgl_passes(metrics.fkgl_score):
+        reasons.append('English must meet the FKGL benchmark of 5.0–6.9 before approval.')
     if metrics is None or metrics.verbatim_mismatches or metrics.verbatim_match_percent != 100:
         reasons.append('Required clinical values did not pass evaluation.')
     judge = metrics.safety_judge if metrics else None

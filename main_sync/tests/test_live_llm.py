@@ -85,11 +85,11 @@ class LiveLlmCallTests(unittest.TestCase):
         ]
         return client
 
-    def test_clinical_rewriting_is_disabled(self):
-        client = self._mock_client("Unvetted model wording")
-        with self.assertRaises(ValueError):
-            live_llm.simplify_to_plain_language(client, "deploy", "source", synthetic_orders())
-        client.chat.completions.create.assert_not_called()
+    def test_simplification_returns_model_wording(self):
+        client = self._mock_client("Plain words.")
+        result = live_llm.simplify_to_plain_language(client, "deploy", "Clinical wording.", synthetic_orders())
+        self.assertEqual(result, "Plain words.")
+        client.chat.completions.create.assert_called_once()
 
     def test_empty_model_response_raises(self):
         client = self._mock_client("   ")

@@ -288,16 +288,15 @@ with st.sidebar:
     st.title("CLEAR Controls")
     st.caption("Bilingual Pediatric Discharge Instruction Review")
 
-    generation_mode = st.radio("Generation mode:", ["Offline demo", "Live"], horizontal=True)
-    st.caption("Offline demo makes no model calls. Live mode translates supplied clinical wording; it does not rewrite English.")
+    st.caption("Live LLM1 simplifies English to FKGL 5.0–6.9, then translates it to Spanish. LLM2 back-translates and checks safety.")
     st.subheader("1. AI Model Selection")
     model_options = ["gpt52", "gpt4o", "gpt56luna", "kimik3", "copus5", "local1", "local2"]
     
     selected_llm1 = st.selectbox(
-        "LLM 1 (Spanish translation):",
+        "LLM 1 (Simplification & Spanish):",
         options=model_options,
         index=model_options.index("gpt4o"),
-        help="Translates supplied clinical English to Spanish with numeric values protected.",
+        help="Simplifies English to FKGL 5.0–6.9, then translates it to Spanish with protected clinical values.",
     )
     selected_llm2 = st.selectbox(
         "LLM 2 (Safety Judge & Back-EN):",
@@ -331,7 +330,7 @@ with st.sidebar:
             )
         else:
             st.markdown(
-                "**Source:**  Offline Mock Fixtures<br/>"
+                "**Source:**  Bundled Synthetic Fixtures<br/>"
                 "<small style='color: #B45309;'>GitHub App not configured — using bundled synthetic data</small>",
                 unsafe_allow_html=True,
             )
@@ -478,19 +477,11 @@ with st.sidebar:
                         module_version=module_version, condition=condition,
                     )
                     packet = inject_drift(baseline, drift_mode)
-                elif generation_mode == "Live":
+                else:
                     packet = orchestrator.generate_live(
                         raw_template, active_orders, module_version=module_version, condition=condition,
                     )
                     live_checked = True
-                elif (not data_source_is_live and condition in MOCK_MODULES
-                      and module_version in MOCK_MODULES[condition]):
-                    packet = run_mock_pipeline(condition, module_version, active_orders)
-                else:
-                    packet = orchestrator.generate(
-                        compose_clinical_text(raw_template, active_orders), active_orders,
-                        module_version=module_version, condition=condition,
-                    )
             except Exception as exc:
                 st.session_state["current_packet"] = None
                 st.session_state["checked_packet"] = None
@@ -517,24 +508,13 @@ with st.sidebar:
 # ---------------------------------------------------------------------------
 # Main Content Area: 4-Way Comparative Review Pane (specs/03 Section 2.2)
 # ---------------------------------------------------------------------------
-st.markdown("##  Pediatric Discharge Instructions — Clinician Review")
+st.markdown("##  Simplified Clinician Instructions")
 
 packet: Optional[InstructionPacket] = st.session_state.get("current_packet")
 
 if packet is None:
     st.info("Select parameters in the sidebar and click **' Generate Instructions'** to begin.")
 else:
-    if st.session_state.get("live_pipeline_notice"):
-        reason = st.session_state.get("live_pipeline_reason") or "reason unavailable"
-        st.warning(
-            " Live model call unavailable; showing offline mock output instead. "
-            f"Reason — {reason}"
-        )
-    if st.session_state.get("live_data_notice"):
-        st.warning(
-            " Live clinical data unavailable for this module/version "
-            "(no upstream template matched); showing offline mock output instead."
-        )
     if packet.is_simulation:
         st.error("SYNTHETIC DRIFT SIMULATION — not for patient use. Review and reject this test packet.")
     # Patient Banner & Status Line
@@ -705,8 +685,8 @@ else:
             st.session_state["pdf_bytes"] = None
             try:
                 orchestrator = PipelineOrchestrator(llm1_model=selected_llm1, llm2_model=selected_llm2)
-                if generation_mode != "Live" or packet.is_simulation:
-                    raise ValueError("Choose Live to regenerate translations; offline checks keep approval blocked.")
+                if packet.is_simulation:
+                    raise ValueError("Drift simulations cannot be approved; generate a normal packet for live review.")
                 packet = orchestrator.recheck_edits_live(packet, edited_text)
             except Exception as exc:
                 # Local checks can still run, but cannot certify a translation.

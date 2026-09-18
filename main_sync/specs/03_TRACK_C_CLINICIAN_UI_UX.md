@@ -22,7 +22,7 @@ Participant 3 owns the clinician-facing interface and review workflow:
 
 ### 2.1 Sidebar Architecture (`app/clinician_ui.py`)
 - **AI Model Selection**:
-  - Generation mode: Offline demo or Live. Live failures are explicit and do not substitute mock output. Scenario C always runs locally.
+  - Normal generation always uses live models. Hide the Offline/Live selector; live failures are explicit and do not substitute mock output. Scenario C remains a local synthetic simulation that cannot be approved.
   - LLM1 Spanish-translation dropdown: Default `gpt4o`, options: `gpt52`, `gpt4o`, `gpt56luna`, `kimik3`, `copus5`, `local1`, `local2`.
   - LLM2 dropdown: Default `gpt4o`, options: `gpt52`, `gpt4o`, `gpt56luna`, `kimik3`, `copus5`, `local1`, `local2`.
 - **Data Source Status Badge**:
@@ -49,7 +49,7 @@ The main content area is structured into 4 balanced columns:
 1. **Original Clinical Orders & Instructions (Col 1)**:
    - Displays raw, unsimplified clinical-grade instruction modules combined with personalized physician orders.
 2. **Simplified English Handout (Col 2)**:
-   - Displays supplied clinical English and bound order values (target: 5th–6th grade). Models never rewrite this wording.
+   - Displays LLM1 simplified English with restored order values (required FKGL 5.0–6.9). Live generation allows three attempts before reporting an unmet target. Clinician edits must pass this benchmark and fresh safety checks before approval.
    - Telemetry badges: FKGL score, verbatim lock status (matches/mismatches), and Safety Judge verdict.
    - Interactive `st.text_area` for clinician inline edits.
 3. **Spanish Translation (Col 3)**:

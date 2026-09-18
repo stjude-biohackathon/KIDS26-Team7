@@ -8,7 +8,8 @@ from string import Template
 from uuid import uuid4
 
 from pipeline import live_llm
-from pipeline.evaluator import check_verbatim, evaluate_text, content_findings
+from pipeline.evaluator import check_verbatim, evaluate_text, content_findings, fkgl_passes, ReadabilityTargetError
+from pipeline.protection import ProtectionError
 from pipeline.llms import AVAILABLE_MODELS, get_client
 from schemas.instruction_packet import ClinicalOrders, EvaluationMetrics, InstructionPacket
 
@@ -65,10 +66,10 @@ def _enforce_deterministic_safety_gate(
     block, so a deterministic mismatch in any pane forces FLAGGED_FOR_REVIEW.
     """
     blocking = []
-    missing, unexpected = content_findings(source, english, orders)
-    if missing:
-        metrics.safety_judge.omitted_red_flags = list(dict.fromkeys(metrics.safety_judge.omitted_red_flags + missing))
-        blocking.append("Required source warnings were removed or changed")
+    # Rephrasing warnings is permitted; the judge audits semantic preservation.
+    _, unexpected = content_findings(source, english, orders)
+    if not fkgl_passes(metrics.fkgl_score):
+        blocking.append("English FKGL must be within 5.0–6.9")
     if unexpected:
         blocking.append("English contains unsupplied safety values")
     if metrics.verbatim_mismatches:
@@ -202,8 +203,8 @@ class PipelineOrchestrator:
     ) -> InstructionPacket:
         """Phase 2: run the real LLM1/LLM2 pipeline instead of binding templates.
 
-        Supplied clinical wording is bound deterministically. LLM1 translates it
-        to Spanish with protected values masked. LLM2 (`self.llm2_model`) back-translates the Spanish pane
+        LLM1 simplifies supplied clinical wording with protected values masked.
+        Restored English must score FKGL 5.0–6.9 before Spanish translation. LLM2 (`self.llm2_model`) back-translates the Spanish pane
         and runs the Safety Judge audit. FKGL/verbatim telemetry is still
         computed locally by `pipeline.evaluator`, per specs/01 Section 2.2 —
         only the Safety Judge verdict comes from the live LLM2 call.
@@ -219,19 +220,30 @@ class PipelineOrchestrator:
         saved_orders = orders.model_copy(deep=True)
 
         llm1_client, llm1_deployment = get_client(self.llm1_model)
-        # Clinical wording comes only from the supplied versioned template.
-        # Structured values are bound without an AI rewriting step.
-        english = compose_clinical_text(composite_template_text, saved_orders)
+        source = compose_clinical_text(composite_template_text, saved_orders)
+        previous_fkgl = None
+        # A bounded retry loop avoids hanging or publishing an unmeasured draft.
+        for attempt in range(1, 4):
+            english = live_llm.simplify_to_plain_language(
+                llm1_client, llm1_deployment, source, saved_orders, previous_fkgl=previous_fkgl,
+            )
+            metrics = evaluate_text(english, saved_orders)
+            if metrics.verbatim_mismatches or content_findings(source, english, saved_orders)[1]:
+                raise ProtectionError("Simplified English changed protected clinical values.")
+            if fkgl_passes(metrics.fkgl_score):
+                break
+            previous_fkgl = metrics.fkgl_score
+        else:
+            raise ReadabilityTargetError(metrics.fkgl_score, 3)
         spanish = live_llm.translate_to_spanish(llm1_client, llm1_deployment, english)
 
         llm2_client, llm2_deployment = get_client(self.llm2_model)
         back = live_llm.back_translate_to_english(llm2_client, llm2_deployment, spanish)
 
-        metrics = evaluate_text(english, saved_orders)
         metrics.safety_judge = live_llm.judge_safety(
             llm2_client, llm2_deployment, composite_template_text, english, saved_orders
         )
-        metrics = _enforce_deterministic_safety_gate(metrics, spanish, back, saved_orders, source=english, english=english)
+        metrics = _enforce_deterministic_safety_gate(metrics, spanish, back, saved_orders, source=source, english=english)
 
         return InstructionPacket(
             packet_id=str(uuid4()),

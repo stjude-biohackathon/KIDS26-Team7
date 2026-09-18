@@ -6,7 +6,7 @@
 - **Investigate, Never Assume:** Do not guess causes or mask unexpected behavior. Always inspect code, data fixtures, and logs to identify and solve root causes directly.
 
 ## 2. Clinical Safety & Institutional Translation Governance
-- **Zero AI-Originated Clinical Prose:** Medical content originates solely from clinician-vetted and versioned instructions and orders. The composer binds structured order values without generating or rewriting clinical instructions.
+- **Source-Grounded Simplification:** Clinical facts originate solely from clinician-vetted, versioned instructions and orders. The composer binds order values; LLM1 then simplifies English to measured FKGL 5.0–6.9 before Spanish translation. Rephrasing is authorized; invented facts and omitted clinical meaning are not. Preserve protected values verbatim, require safety judging, and retain clinician and authorized Spanish review.
 - **Authorized Translation Gate:** All patient-facing Spanish guidance must be vetted by authorized personnel (certified medical translator or credentialed bilingual clinician). Accurate and precise Spanish translation is a hard sign-off block. 
 - **Sentinel Protection & Parity:** Safety-critical values (doses, thresholds, phone numbers) are masked  before any LLM processing and restored verbatim. Numeric/unit parity mismatch is a hard sign-off block.
 - **Zero Real Patient Data:** Use synthetic, de-identified fixtures only. Never introduce real identifiers. Never save data on desk, obtain data on the fly and process it without saving.
