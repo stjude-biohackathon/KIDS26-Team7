@@ -30,12 +30,26 @@ class SimplificationTests(unittest.TestCase):
         self.assertEqual(result.evaluation_metrics.fkgl_score,5.8)
         translate.assert_called_once_with(unittest.mock.ANY,'test','Passing candidate.')
 
-    def test_unmet_benchmark_stops_after_three_attempts_without_translation(self):
-        with patch('pipeline.orchestrator.get_client',return_value=(object(),'test')), patch('pipeline.live_llm.simplify_to_plain_language',return_value='Too hard.') as simplify, patch('pipeline.evaluator.textstat.flesch_kincaid_grade',return_value=12.0), patch('pipeline.live_llm.translate_to_spanish') as translate:
-            with self.assertRaisesRegex(ValueError,'FKGL'):
-                PipelineOrchestrator().generate_live('Source.',orders(),module_version='v1',condition='test')
+    def test_unmet_benchmark_returns_third_draft_with_failed_score(self):
+        judge = SafetyJudgeResult(overall_verdict='PASS')
+        with patch('pipeline.orchestrator.get_client',return_value=(object(),'test')), patch('pipeline.live_llm.simplify_to_plain_language',return_value='Too hard.') as simplify, patch('pipeline.evaluator.textstat.flesch_kincaid_grade',return_value=12.0), patch('pipeline.live_llm.translate_to_spanish', return_value='Muy difícil.') as translate, patch('pipeline.live_llm.back_translate_to_english', return_value='Too hard.'), patch('pipeline.live_llm.judge_safety', return_value=judge):
+            packet = PipelineOrchestrator().generate_live(
+                'Source.', orders(), module_version='v1', condition='test'
+            )
         self.assertEqual(simplify.call_count,3)
-        translate.assert_not_called()
+        self.assertEqual(packet.simplified_en, 'Too hard.')
+        self.assertEqual(packet.evaluation_metrics.fkgl_score, 12.0)
+        self.assertEqual(packet.evaluation_metrics.safety_judge.overall_verdict,
+                         'FLAGGED_FOR_REVIEW')
+        translate.assert_called_once()
+
+    def test_simplification_prompt_uses_information_preservation_rule(self):
+        from pipeline.live_llm import _SIMPLIFY_SYSTEM_PROMPT
+        self.assertIn(
+            'Change the language, not the information. Preserve every instruction, fact, '
+            'condition, exception, warning, and clinical value.',
+            _SIMPLIFY_SYSTEM_PROMPT,
+        )
 
     def test_approval_blocks_out_of_range_readability(self):
         from app.review import approval_blockers

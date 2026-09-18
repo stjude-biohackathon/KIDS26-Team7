@@ -49,7 +49,7 @@ Generation replaces those controls with FKGL (one decimal), verbatim percentage 
 1. **Original Clinical Orders & Instructions (Col 1)**:
    - Displays raw, unsimplified clinical-grade instruction modules combined with personalized physician orders.
 2. **Simplified English Handout (Col 2)**:
-   - Displays LLM1 simplified English with restored order values (required FKGL 5.0–6.9). Live generation allows three attempts before reporting an unmet target. Clinician edits must pass this benchmark and fresh safety checks before approval.
+   - Displays LLM1 simplified English with restored order values (required FKGL 5.0–6.9). Live generation allows three attempts. If readability, protected values, or the safety judge fails, the simplified draft remains visible with its failure reason and a not-for-patient-use warning. Clinician edits must pass fresh checks before approval.
    - Telemetry badges: FKGL score, verbatim lock status (matches/mismatches), and Safety Judge verdict.
    - Interactive `st.text_area` for clinician inline edits.
 3. **Spanish Translation (Col 3)**:

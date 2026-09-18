@@ -20,7 +20,7 @@ Participant 1 owns the multi-LLM generation, translation, and safety verificatio
 
 ### 2.1 Vetted English Composer (`pipeline/orchestrator.py`)
 - `compose_clinical_text` binds template placeholders and appends supplied structured order fields when required values are absent. It does not invent clinical instructions.
-- LLM1 performs protected English simplification followed by protected Spanish translation. English must measure FKGL 5.0–6.9 after restoration. Retry from the original composed source with score feedback, at most three attempts; an unmet target raises an explicit readability error before translation.
+- LLM1 receives the simplification rule: “Change the language, not the information. Preserve every instruction, fact, condition, exception, warning, and clinical value.” It targets FKGL 5.0–6.9 after restoration and retries from the original composed source with score feedback at most three times. If the target remains unmet, retain the third simplified draft with its actual score, finish the requested checks, mark it for review, and block approval.
 - Inputs: versioned clinical source and `ClinicalOrders`; output: `simplified_en` (LLM1 plain-language English for clinician review).
 - Target FKGL is 5.0–6.9 inclusive. Manual edits are not automatically rewritten; live rechecking measures them and an out-of-range score blocks approval.
 
@@ -78,7 +78,7 @@ No matching value/warning means the requested injection fails explicitly. Packet
 - Restore exact known markers for display only; never insert missing values or guess corrupted markers. Unrecoverable markers display `[UNRESOLVED PROTECTED VALUE]`. Failures stay in session memory and never appear in exception text or logs.
 - Stop at the failed stage and retain all available panes; downstream translation/back-translation and model judging are skipped. The review verdict is deterministically `FLAGGED_FOR_REVIEW`, not a claimed completed model audit.
 - Fresh English rechecks require each distinct numeric value at least once from composed source/orders, including source-only values. Unresolved placeholders block approval. A repaired draft creates a new revision; successful checks clear failures only on that revision. Approval, approved PDF export, and approved library saving reject unresolved protection failures.
-- Configuration/transport failures without a usable response still fail explicitly. FKGL-only retries retain the existing three-attempt limit; this draft-recovery behavior applies to protected-value failures.
+- Configuration/transport failures without a usable response still fail explicitly. FKGL-only retries retain the three-attempt limit. Readability, protection, and judge failures with a usable simplification all return the available `PENDING`, not-for-patient-use draft. They never bypass their approval or export gates.
 
 - Simplification/translation/back-translation inputs mask numeric values and associated units before model calls. Restoration requires each distinct source sentinel at least once, with exact value restoration, and rejects invented numbers. Repetition counts need not match. This presence check never authorizes adding, changing, or omitting instructions; the judge still audits each instruction and its value associations.
 - Judge inputs are masked too; complete typed audit fields are required. Invalid, incomplete, or unavailable audits yield `FLAGGED_FOR_REVIEW`.

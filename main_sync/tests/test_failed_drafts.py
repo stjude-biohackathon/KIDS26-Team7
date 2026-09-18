@@ -20,7 +20,7 @@ def provider(fail_stage):
     def reply(**kwargs):
         prompt = kwargs['messages'][0]['content']
         text = kwargs['messages'][1]['content']
-        stage = ('English simplification' if prompt.startswith('Simplify') else
+        stage = ('English simplification' if prompt.startswith('Change the language') else
                  'Spanish translation' if 'Latin American' in prompt else
                  'English back-translation' if 'literally' in prompt else 'judge')
         calls.append(stage)

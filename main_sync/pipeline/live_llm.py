@@ -15,20 +15,11 @@ from pipeline.protection import ProtectedText
 from schemas.instruction_packet import ClinicalOrders, SafetyJudgeResult
 
 _SIMPLIFY_SYSTEM_PROMPT = (
-    "Simplify the supplied clinical instructions into plain English for parents. "
-    "ONLY SIMPLIFY EXISTING INSTRUCTIONS. Do not rewrite them into a new handout, "
-    "summarize, reorganize, infer advice, or create new instructions. "
-    "Work instruction by instruction in the original order. Keep wording that is already simple. "
-    "Only replace difficult words with faithful plain-language equivalents and split long sentences. "
-    "Preserve every action, condition, exception, negation, urgency, warning, medication name, "
-    "route, frequency, timing, and contact instruction in its original clinical context. "
-    "Do not add explanations, examples, reassurance, or recommendations absent from the source. "
-    "Do not combine distinct instructions merely because they share a numeric value. "
-    "Target measured Flesch-Kincaid Grade Level (FKGL) 5.0–6.9, but never change or omit "
-    "an instruction to meet readability. Use unnumbered bullets when the source uses a list. "
-    "Preserve each distinct protected marker exactly at least once; its repetition count "
-    "need not match the source, but all instructions and value-to-instruction associations must remain. "
-    "Return only the simplified source instructions."
+    "Change the language, not the information. Preserve every instruction, fact, "
+    "condition, exception, warning, and clinical value. "
+    "Simplify the supplied clinical instructions into plain English for parents, "
+    "targeting a measured Flesch-Kincaid Grade Level (FKGL) of 5.0–6.9. "
+    "Do not add new clinical advice. Return only the simplified instructions."
 )
 
 _TRANSLATE_ES_SYSTEM_PROMPT = (

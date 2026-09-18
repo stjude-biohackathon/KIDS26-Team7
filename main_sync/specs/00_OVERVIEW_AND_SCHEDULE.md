@@ -1,7 +1,7 @@
 # 00: Project Architecture, Team Roles & Iterative Schedule
 
 ## 1. Executive Summary
-This project builds an AI-assisted pediatric discharge instruction simplification platform with clinician-in-the-loop review. It binds supplied clinical English and structured orders, then translates to Spanish with protected values. LLM1 simplifies the bound English to measured FKGL 5.0–6.9 before translating. Up to three attempts are allowed; unmet targets fail explicitly. Rephrasing must preserve clinical facts and protected values, with safety judging and clinician review required.
+This project builds an AI-assisted pediatric discharge instruction simplification platform with clinician-in-the-loop review. It binds supplied clinical English and structured orders, then optionally translates to Spanish with protected values. LLM1 follows the rule: “Change the language, not the information. Preserve every instruction, fact, condition, exception, warning, and clinical value.” It targets measured FKGL 5.0–6.9 for up to three attempts. An unmet readability target or failed safety check retains the available simplified draft for review, marks it not for patient use, and blocks approval.
 
 The system is engineered to be built by three participants working in parallel across decoupled tracks with frequent, automated merge checkpoints:
 - **Track A (Participant 1)**: LLM Pipeline, Quality Gates & Safety Judge

@@ -8,7 +8,7 @@ from string import Template
 from uuid import uuid4
 
 from pipeline import live_llm
-from pipeline.evaluator import check_verbatim, evaluate_text, content_findings, fkgl_passes, ReadabilityTargetError
+from pipeline.evaluator import check_verbatim, evaluate_text, content_findings, fkgl_passes
 from pipeline.protection import ProtectionError, numeric_findings
 from pipeline.llms import AVAILABLE_MODELS, get_client
 from schemas.instruction_packet import ClinicalOrders, EvaluationMetrics, InstructionPacket, SafetyJudgeResult
@@ -226,9 +226,9 @@ class PipelineOrchestrator:
         steps are skipped entirely and both panes remain empty; the family does
         not need a Spanish handout, so no unauthorized translation is produced.
 
-        Protected-output failures return pending review-only drafts with findings.
-        Transport/configuration failures and exhausted FKGL retries still raise.
-        The Safety Judge itself is resilient (specs/01 Section 2.3).
+        Readability, protection, and judge failures return pending review-only
+        drafts with their measured findings. Transport and configuration
+        failures without a usable model response still raise.
         """
         if not all(value.strip() for value in (
             composite_template_text, module_version, condition, orders.order_version
@@ -252,8 +252,9 @@ class PipelineOrchestrator:
             if fkgl_passes(metrics.fkgl_score):
                 break
             previous_fkgl = metrics.fkgl_score
-        else:
-            raise ReadabilityTargetError(metrics.fkgl_score, 3)
+        # If all three attempts miss the readability target, keep the third
+        # draft. The deterministic gate below marks it FLAGGED_FOR_REVIEW, and
+        # approval remains blocked by the measured FKGL score.
         spanish, back, metrics = self._complete_live_review(
             composite_template_text, source, english, saved_orders, metrics, failures, translate,
         )

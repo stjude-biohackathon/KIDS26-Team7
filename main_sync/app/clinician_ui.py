@@ -156,7 +156,15 @@ st.markdown(
     <style>
     /* Reduce padding between top of page and title */
     .block-container {
-        padding-top: 1rem;
+        padding-top: 2.5rem;
+    }
+    .front-page-heading {
+        text-align: center;
+        margin: 0 auto 1rem auto;
+    }
+    .front-page-heading h2 {
+        margin-top: 0;
+        padding-top: 0.25rem;
     }
     .reportview-container {
         background-color: #F8FAFC;
@@ -504,8 +512,6 @@ def _run_generation(want_spanish: bool) -> None:
 # ---------------------------------------------------------------------------
 # Main Content Area (uichanges.md front-page layout)
 # ---------------------------------------------------------------------------
-st.markdown("## Bilingual Pediatric Discharge Instruction Review")
-
 # A review belongs to the exact inputs used to generate it. Sidebar changes
 # return to the source preview before any older result can be approved.
 review_inputs = hashlib.sha256(json.dumps({
@@ -524,9 +530,15 @@ if st.session_state.get("review_inputs") != review_inputs:
     st.session_state["txt_clinician_en"] = ""
 
 st.markdown(
-    f"**Patient MRN:** `{active_orders.patient_id}` ({active_orders.age or 'N/A'})"
+    "<div class='front-page-heading'>"
+    "<h2>Bilingual Pediatric Discharge Instruction Review</h2>"
+    f"<p><strong>Patient MRN:</strong> {escape(active_orders.patient_id)} "
+    f"({escape(active_orders.age or 'N/A')})</p>"
+    f"<p><strong>Module:</strong> "
+    f"{escape(MODULE_DISPLAY_NAMES.get(condition, condition))}</p>"
+    "</div>",
+    unsafe_allow_html=True,
 )
-st.markdown(f"**Module:** {MODULE_DISPLAY_NAMES.get(condition, condition)}")
 
 packet: Optional[InstructionPacket] = st.session_state.get("current_packet")
 
@@ -557,15 +569,17 @@ if packet is None:
     # ------------------------------------------------------------------
     # Front page: generate controls + full-width original instructions
     # ------------------------------------------------------------------
-    gen_col, es_col = st.columns([1.2, 2])
-    with gen_col:
-        generate_clicked = st.button("Generate Simplified Instructions", type="primary", width="stretch")
-    with es_col:
-        want_spanish = st.checkbox(
-            "Include Spanish translation (with English back-translation) for family",
-            key="chk_want_spanish",
-            help="When checked, the simplified English is translated to Spanish and back-translated for verification.",
-        )
+    _, centered_controls, _ = st.columns([1, 3, 1])
+    with centered_controls:
+        gen_col, es_col = st.columns([1.2, 2])
+        with gen_col:
+            generate_clicked = st.button("Generate Simplified Instructions", type="primary", width="stretch")
+        with es_col:
+            want_spanish = st.checkbox(
+                "Include Spanish translation (with English back-translation) for family",
+                key="chk_want_spanish",
+                help="When checked, the simplified English is translated to Spanish and back-translated for verification.",
+            )
     if generate_clicked:
         _run_generation(want_spanish)
 
@@ -643,6 +657,23 @@ else:
         for finding in metrics.protection_failures:
             st.text(finding)
         st.caption("Only intact markers were restored. Missing values were not inserted; unresolved markers require clinician correction. Later model stages were skipped.")
+
+    if not 5.0 <= metrics.fkgl_score <= 6.9:
+        st.error(
+            "DRAFT — NOT FOR PATIENT USE. The readability score did not meet "
+            "the FKGL target of 5.0–6.9. The draft remains visible for review, "
+            "but approval is blocked."
+        )
+
+    judge = metrics.safety_judge
+    if (not metrics.protection_failures and judge is not None and
+            (judge.overall_verdict != "PASS" or judge.factual_drift_detected or
+             judge.omitted_red_flags or judge.contradictory_advice)):
+        st.error(
+            "DRAFT — NOT FOR PATIENT USE. The safety review did not pass. "
+            "The simplified version remains visible for clinician review, but "
+            "approval is blocked."
+        )
 
     if metrics.safety_judge and metrics.safety_judge.factual_drift_detected:
         st.warning("Safety Alert: " + metrics.safety_judge.explanation)

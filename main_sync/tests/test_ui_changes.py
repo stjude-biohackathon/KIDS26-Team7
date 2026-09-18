@@ -45,6 +45,11 @@ class UiChangesTests(unittest.TestCase):
     def test_english_only_publish_has_no_false_spanish_attestation(self):
         with phase3_app():
             at = self.app()
+            self.assertTrue(any(
+                'front-page-heading' in item.value and
+                'Bilingual Pediatric Discharge Instruction Review' in item.value
+                for item in at.markdown
+            ))
             self.assertFalse(at.checkbox(key='chk_want_spanish').value)
             self.assertTrue(any('clinical-box-full' in m.value and 'CLINICAL ORDERS' in m.value for m in at.markdown))
             click(at, 'Generate Simplified Instructions')
@@ -76,3 +81,33 @@ class UiChangesTests(unittest.TestCase):
             self.assertEqual(at.session_state['current_packet'].status, 'PENDING')
             at.checkbox[0].check().run(); click(at, 'Approve & Publish')
             self.assertEqual(at.session_state['current_packet'].status, 'APPROVED')
+
+    def test_failed_readability_and_judge_still_show_simplified_draft(self):
+        from schemas.instruction_packet import EvaluationMetrics, SafetyJudgeResult
+        from unittest.mock import patch
+        packet = test_phase3.packet()
+        packet.simplified_en = 'A difficult synthetic draft remains visible.'
+        packet.translated_es = packet.back_translated_en = ''
+        packet.evaluation_metrics = EvaluationMetrics(
+            fkgl_score=11.4,
+            safety_judge=SafetyJudgeResult(
+                overall_verdict='FLAGGED_FOR_REVIEW',
+                explanation='A source instruction may be missing.',
+            ),
+        )
+        with phase3_app(), patch(
+            'pipeline.orchestrator.PipelineOrchestrator.generate_live',
+            return_value=packet,
+        ):
+            at = self.app()
+            click(at, 'Generate Simplified Instructions')
+            self.assertFalse(at.exception)
+            self.assertEqual(
+                at.text_area(key='txt_clinician_en').value,
+                packet.simplified_en,
+            )
+            notices = [item.value for item in at.error]
+            self.assertTrue(any('readability' in item.lower() for item in notices))
+            self.assertTrue(any('safety review' in item.lower() for item in notices))
+            click(at, 'Approve & Publish')
+            self.assertEqual(at.session_state['current_packet'].status, 'PENDING')
