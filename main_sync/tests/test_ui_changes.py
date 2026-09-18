@@ -69,7 +69,10 @@ class UiChangesTests(unittest.TestCase):
                 for item in at.markdown
             ))
             self.assertFalse(at.checkbox(key='chk_want_spanish').value)
-            self.assertTrue(any('clinical-box-full' in m.value and 'CLINICAL ORDERS' in m.value for m in at.markdown))
+            self.assertTrue(any(
+                'clinical-box-full' in m.value and 'clinical-orders-preview' in m.value
+                for m in at.markdown
+            ))
             click(at, 'Generate Simplified Instructions')
             self.assertFalse(at.exception)
             self.assertFalse(at.session_state['current_packet'].translated_es)
@@ -101,6 +104,43 @@ class UiChangesTests(unittest.TestCase):
         self.assertIn('[data-testid="stAppDeployButton"]', source)
         self.assertIn('resize: horizontal', source)
         self.assertIn('label_visibility="collapsed"', source)
+
+    def test_new_front_page_layout_and_add_medication_control(self):
+        with phase3_app():
+            at = self.app()
+            preview = next(
+                item.value for item in at.markdown
+                if "<div class='clinical-orders-preview'>" in item.value
+            )
+            self.assertIn('clinical-section-title', preview)
+            self.assertIn('<strong>MRN</strong>', preview)
+            self.assertIn('<strong>Hydration Strategy:</strong>', preview)
+            self.assertNotIn('CLINICAL PROTOCOL:', preview)
+            self.assertNotIn('===', preview)
+            self.assertFalse(any('Active Protocol:' in item.value for item in at.info))
+
+            initial_names = [item for item in at.text_input if item.label.startswith('Name #')]
+            click(at, 'Add medication')
+            added_names = [item for item in at.text_input if item.label.startswith('Name #')]
+            self.assertEqual(len(added_names), len(initial_names) + 1)
+            self.assertEqual(added_names[-1].value, '')
+
+        source = (Path(__file__).parents[1] / 'app' / 'clinician_ui.py').read_text()
+        self.assertIn('st.container(key="generation_controls")', source)
+        self.assertIn('.st-key-generation_controls', source)
+        self.assertNotIn('st.spinner(', source)
+        self.assertIn('[data-testid="stStatusWidget"]', source)
+
+    def test_library_table_stays_concise(self):
+        with phase3_app():
+            at = self.app()
+            click(at, 'Generate Simplified Instructions')
+            click(at, 'Approve & Publish')
+            self.assertTrue(at.dataframe)
+            self.assertEqual(
+                list(at.dataframe[0].value.columns),
+                ['Module', 'Status', 'Physician Decision', 'Timestamp'],
+            )
 
     def test_order_change_discards_stale_review(self):
         with phase3_app():

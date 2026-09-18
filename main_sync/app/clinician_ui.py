@@ -239,6 +239,65 @@ st.markdown(
         overflow-y: auto;
         white-space: pre-wrap;
     }
+    .clinical-orders-preview {
+        color: #1E293B;
+    }
+    .clinical-preview-title {
+        font-size: 1.25rem;
+        font-weight: 750;
+        color: #0F172A;
+        margin-bottom: 0.8rem;
+    }
+    .clinical-section-title {
+        font-size: 1rem;
+        font-weight: 700;
+        color: #1E3A5F;
+        margin: 1.1rem 0 0.45rem;
+        padding-bottom: 0.25rem;
+        border-bottom: 1px solid #CBD5E1;
+    }
+    .clinical-field-row {
+        display: grid;
+        grid-template-columns: minmax(8rem, 0.32fr) 1fr;
+        gap: 0.75rem;
+        padding: 0.18rem 0;
+    }
+    .medication-preview {
+        margin: 0.45rem 0 0.45rem 1rem;
+        padding: 0.55rem 0.75rem;
+        border-left: 3px solid #93C5FD;
+        background: #F8FAFC;
+    }
+    .medication-preview-title {
+        font-weight: 700;
+        margin-bottom: 0.25rem;
+    }
+    .protocol-version {
+        color: #64748B;
+        font-size: 0.82rem;
+        font-weight: 500;
+    }
+    .protocol-copy {
+        margin-left: 1rem;
+        line-height: 1.6;
+    }
+    .protocol-name {
+        font-size: 1.05rem;
+        font-weight: 700;
+        margin-bottom: 0.65rem;
+    }
+    .protocol-item {
+        margin: 0.45rem 0;
+        padding-left: 0.65rem;
+    }
+    .st-key-generation_controls [data-testid="stHorizontalBlock"] {
+        align-items: center;
+        justify-content: center;
+    }
+    .st-key-generation_controls [data-testid="stCheckbox"] {
+        display: flex;
+        justify-content: center;
+    }
     .github-status {
         display: inline-flex;
         align-items: center;
@@ -294,6 +353,11 @@ st.markdown(
         min-height: 65vh !important;
     }
     [data-testid="stAppDeployButton"], .stDeployButton {
+        display: none !important;
+    }
+    [data-testid="stStatusWidget"],
+    [data-testid="stDecoration"],
+    [data-testid="stSpinner"] {
         display: none !important;
     }
     </style>
@@ -449,8 +513,6 @@ with st.sidebar:
                                      format_func=lambda v: f"{v} ({base_order.order_id})",
                                      key=f"order_version_{condition}_{base_order.order_id}")
 
-    st.info(f"Active Protocol: `{condition}` | `{module_version}` | `{order_version}`")
-
     st.divider()
     st.subheader("4. Clinical Orders Customization")
 
@@ -465,8 +527,26 @@ with st.sidebar:
 
     # Dynamic Medications
     with st.expander("Prescribed Medications", expanded=False):
+        medication_count_key = f"medication_count_{condition}_{order_widget_key}"
+        if medication_count_key not in st.session_state:
+            st.session_state[medication_count_key] = len(base_order.medications)
+        medication_count = max(
+            int(st.session_state[medication_count_key]), len(base_order.medications)
+        )
+        if st.button(
+            "Add medication", key=f"add_medication_{condition}_{order_widget_key}",
+            width="stretch",
+        ):
+            st.session_state[medication_count_key] = medication_count + 1
+            st.rerun()
+
         med_list: List[MedicationOrder] = []
-        for i, m in enumerate(base_order.medications):
+        for i in range(medication_count):
+            m = (
+                base_order.medications[i]
+                if i < len(base_order.medications)
+                else MedicationOrder(name="", dose="", route="", frequency="")
+            )
             st.markdown(f"**Medication {i+1}**")
             m_name = st.text_input(f"Name #{i+1}:", value=m.name, key=f"med_name_{condition}_{order_widget_key}_{i}")
             m_dose = st.text_input(f"Dose #{i+1}:", value=m.dose, key=f"med_dose_{condition}_{order_widget_key}_{i}")
@@ -541,7 +621,9 @@ MODULE_DISPLAY_NAMES = {
 
 def _run_generation(want_spanish: bool) -> None:
     """Run the pipeline for the current sidebar selections and store the result."""
-    with st.spinner("Processing plain-language simplification and quality gates..."):
+    # Keep generation visually still; results or actionable failures replace
+    # the controls when the request completes.
+    with st.container():
         raw_template = live_templates[condition][module_version]
         live_checked = False
         live_failed = False
@@ -646,13 +728,89 @@ def _compose_original_display(orders: ClinicalOrders, template_text: str, templa
     return text
 
 
+def _compose_original_preview_html(
+    orders: ClinicalOrders, template_text: str, template_version: str
+) -> str:
+    """Render source orders as a readable, escaped preview before generation."""
+    medications = []
+    for medication in orders.medications:
+        details = " · ".join(
+            escape(value)
+            for value in (
+                medication.dose,
+                medication.route,
+                medication.frequency,
+            )
+            if value
+        )
+        instructions = (
+            f"<div>{escape(medication.special_instructions)}</div>"
+            if medication.special_instructions
+            else ""
+        )
+        medications.append(
+            "<div class='medication-preview'>"
+            f"<div class='medication-preview-title'>{escape(medication.name or 'Unnamed medication')}</div>"
+            f"<div>{details or 'Details not entered'}</div>"
+            f"{instructions}</div>"
+        )
+    medication_html = "".join(medications) or (
+        "<div class='medication-preview'>No medications entered.</div>"
+    )
+
+    protocol_rows = []
+    for index, raw_line in enumerate(
+        line.strip() for line in template_text.splitlines() if line.strip()
+    ):
+        line = raw_line
+        for prefix in ("### ", "## ", "# ", "- ", "* ", "• "):
+            if line.startswith(prefix):
+                line = line.removeprefix(prefix).strip()
+                break
+        if line.startswith("===") and line.endswith("==="):
+            line = line.removeprefix("===").removesuffix("===").strip()
+        if index == 0 and line.upper().startswith("CLINICAL PROTOCOL:"):
+            protocol_rows.append(
+                f"<div class='protocol-name'>{escape(line.split(':', 1)[1].strip())}</div>"
+            )
+            continue
+        label, separator, detail = line.partition(":")
+        if separator and label and len(label) <= 80:
+            protocol_rows.append(
+                "<div class='protocol-item'>"
+                f"<strong>{escape(label)}:</strong> {escape(detail.strip())}</div>"
+            )
+        else:
+            protocol_rows.append(f"<div class='protocol-item'>{escape(line)}</div>")
+    protocol_html = "".join(protocol_rows)
+    return (
+        "<div class='clinical-orders-preview'>"
+        "<div class='clinical-preview-title'>Clinical Orders</div>"
+        f"<div class='clinical-field-row'><strong>MRN</strong><span>{escape(orders.patient_id)}</span></div>"
+        f"<div class='clinical-field-row'><strong>Age</strong><span>{escape(orders.age or 'N/A')}</span></div>"
+        f"<div class='clinical-field-row'><strong>Diagnosis</strong><span>{escape(orders.diagnosis)}</span></div>"
+        "<div class='clinical-section-title'>Medications</div>"
+        f"{medication_html}"
+        "<div class='clinical-section-title'>Safety Limits</div>"
+        f"<div class='clinical-field-row'><strong>Urgent fever</strong><span>{escape(orders.urgent_fever_threshold or 'Not entered')}</span></div>"
+        f"<div class='clinical-field-row'><strong>Emergency fever</strong><span>{escape(orders.emergency_fever_threshold or 'Not entered')}</span></div>"
+        "<div class='clinical-section-title'>Contacts</div>"
+        f"<div class='clinical-field-row'><strong>Daytime phone</strong><span>{escape(orders.daytime_phone or 'Not entered')}</span></div>"
+        f"<div class='clinical-field-row'><strong>After-hours phone</strong><span>{escape(orders.after_hours_phone or 'Not entered')}</span></div>"
+        f"<div class='clinical-field-row'><strong>Emergency phone</strong><span>{escape(orders.emergency_phone or 'Not entered')}</span></div>"
+        "<div class='clinical-section-title'>Protocol Instructions "
+        f"<span class='protocol-version'>{escape(template_version)}</span></div>"
+        f"<div class='protocol-copy'>{protocol_html}</div>"
+        "</div>"
+    )
+
+
 if packet is None:
     # ------------------------------------------------------------------
     # Front page: generate controls + full-width original instructions
     # ------------------------------------------------------------------
-    _, centered_controls, _ = st.columns([1, 3, 1])
-    with centered_controls:
-        gen_col, es_col = st.columns([1.2, 2])
+    with st.container(key="generation_controls"):
+        _, gen_col, es_col, _ = st.columns([1, 1.7, 1.25, 1])
         with gen_col:
             generate_clicked = st.button("Generate Simplified Instructions", type="primary", width="stretch")
         with es_col:
@@ -664,12 +822,10 @@ if packet is None:
     if generate_clicked:
         _run_generation(want_spanish)
 
-    try:
-        preview_source = compose_clinical_text(live_templates[condition][module_version], active_orders)
-    except Exception:
-        preview_source = live_templates[condition][module_version]
     st.markdown(
-        f"<div class='clinical-box-full'>{escape(_compose_original_display(active_orders, preview_source, module_version))}</div>",
+        "<div class='clinical-box-full'>"
+        f"{_compose_original_preview_html(active_orders, live_templates[condition][module_version], module_version)}"
+        "</div>",
         unsafe_allow_html=True,
     )
 else:
@@ -944,19 +1100,11 @@ with st.expander("View versioned library records", expanded=False):
     else:
         table_rows = []
         for r in reversed(records):
+            timestamp = r.reviewed_at or r.created_at
             table_rows.append({
-                "Record ID": r.packet_id,
-                "Parent Record": r.parent_packet_id or "—",
-                "PDF Annotation": get_physician_annotation(r),
-                "Simulation": r.is_simulation,
-                "Timestamp": r.created_at[:19].replace("T", " ") if r.created_at else "",
                 "Module": MODULE_DISPLAY_NAMES.get(r.condition, r.condition),
                 "Status": r.status,
                 "Physician Decision": r.physician_decision or get_physician_annotation(r),
-                "FKGL Grade": r.evaluation_metrics.fkgl_score if r.evaluation_metrics else 0.0,
-                "Verbatim Match %": f"{r.evaluation_metrics.verbatim_match_percent}%" if r.evaluation_metrics else "100%",
-                "Rejection Category": r.rejection_category or "—",
-                "Rejection Reason": r.rejection_reason or "—",
-                "Reviewed At": r.reviewed_at[:19].replace("T", " ") if r.reviewed_at else "—",
+                "Timestamp": timestamp[:19].replace("T", " ") if timestamp else "",
             })
         st.dataframe(table_rows, width="stretch")

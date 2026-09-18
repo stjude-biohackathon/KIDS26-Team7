@@ -32,17 +32,17 @@ Participant 3 owns the clinician-facing interface and review workflow:
 - **Protocol Version Selectors**:
   - Protocol choices require matching loaded templates and orders; module versions come from available content, not hardcoded labels.
   - Order Set Version displays the actual loaded version and order ID. The current loader exposes one order set per condition. Historical labels without archived content are not offered.
-  - Protocol summary badge displaying active versions.
+  - Do not display a redundant active-protocol summary beneath the selectors.
 - **Clinical Orders Customization**:
   - Patient synthetic ID (shown as MRN), age, and the field labeled Module. Internal schema names remain compatible.
-  - Medication expanders (Name, Dose, Frequency, Route, Special instructions).
+  - Medication expanders (Name, Dose, Frequency, Route, Special instructions), with an Add medication control that appends a blank medication row.
   - Fever threshold inputs (`100.4°F` urgent, `101.0°F` emergency).
   - Daytime clinic, 24/7 triage, and emergency contact numbers.
 - **Scenario C Drift Simulator Expander**:
   - Allows clinicians to test error detection by injecting simulated clinical contradictions, altered thresholds, or altered dosages.
 
 ### 2.2 Source Preview and Comparative Review
-The front page has reduced top padding and the title "Pediatric Discharge Instruction Review". Two patient-summary lines display the hardcoded prototype name John Doe and sex M with the active MRN and age, followed by a larger selected-module name. Generate Simplified Instructions and an unchecked `Generate Spanish` checkbox appear together, followed by a full-width scrollable original-instructions box.
+The front page has reduced top padding and the title "Pediatric Discharge Instruction Review". Two patient-summary lines display the hardcoded prototype name John Doe and sex M with the active MRN and age, followed by a larger selected-module name. Generate Simplified Instructions and an unchecked `Generate Spanish` checkbox are centered together. A full-width scrollable source preview follows, with clear headings, labeled fields, indented medication cards, and readable spacing rather than raw delimiter headings. The top Streamlit status/loading decoration and generation spinner are hidden.
 
 Generation replaces those controls with FKGL (one decimal), verbatim percentage (whole number), and judge verdict. Verbatim help lists only missing safety tokens; correctly preserved tokens are not listed. New Generation returns to the preview. No viewport slider is shown. Original clinical orders and the label-free simplified-English editor start at equal width and height; the original pane has a horizontal resize handle that gives its remaining width to the editor. When Spanish is requested, Spanish and back-translated English appear as a second equal-width row.
 
@@ -100,16 +100,11 @@ Generation replaces those controls with FKGL (one decimal), verbatim percentage 
 
 ### 2.5 Library Explorer
 - Expander title: **"View versioned library records"** (reflecting both approved and rejected records).
-- Columns displayed:
-  - `Record ID`
-  - `Timestamp`
+- Columns displayed, in order:
   - `Module`
   - `Status`
   - `Physician Decision` (`Approved by physician`, `Edited and approved by physician`, `Rejected by physician`)
-  - `Parent Record` and `Simulation`
-  - `PDF Annotation`
-  - `FKGL Grade`
-  - `Verbatim Match %`
+  - `Timestamp` (review time when available, otherwise creation time)
 
 ---
 
