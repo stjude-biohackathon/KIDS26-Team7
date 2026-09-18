@@ -89,15 +89,19 @@ class UiChangesTests(unittest.TestCase):
             at = self.app()
             self.assertEqual(at.checkbox(key='chk_want_spanish').label, 'Generate Spanish')
             labels = [item.label for item in at.text_input]
-            self.assertIn('MRN:', labels)
-            self.assertIn('Diagnosis:', labels)
+            self.assertNotIn('MRN:', labels)
+            self.assertNotIn('Patient Age:', labels)
+            self.assertNotIn('Diagnosis:', labels)
+            self.assertNotIn('Weight (kg):', labels)
+            self.assertNotIn('Urgent Fever:', labels)
+            self.assertNotIn('Emergency Fever:', labels)
             self.assertNotIn('Synthetic Patient ID:', labels)
             self.assertNotIn('Module:', labels)
             subheaders = [item.value for item in at.subheader]
             self.assertIn('2. GitHub App', subheaders)
             self.assertIn('3. Protocol & Module Version', subheaders)
-            self.assertIn('4. Clinical Orders Customization', subheaders)
-            self.assertIn('5. Scenario C Drift Simulator', subheaders)
+            self.assertNotIn('4. Clinical Orders Customization', subheaders)
+            self.assertIn('4. Scenario C Drift Simulator', subheaders)
             self.assertTrue(any('github-status' in item.value for item in at.markdown))
             self.assertFalse(any('LLM1 simplifies English' in item.value for item in at.caption))
 
@@ -106,7 +110,7 @@ class UiChangesTests(unittest.TestCase):
         self.assertIn('resize: horizontal', source)
         self.assertIn('label_visibility="collapsed"', source)
 
-    def test_new_front_page_layout_and_add_medication_control(self):
+    def test_new_front_page_layout_has_no_order_edit_controls(self):
         with phase3_app():
             at = self.app()
             preview = next(
@@ -120,11 +124,8 @@ class UiChangesTests(unittest.TestCase):
             self.assertNotIn('===', preview)
             self.assertFalse(any('Active Protocol:' in item.value for item in at.info))
 
-            initial_names = [item for item in at.text_input if item.label.startswith('Name #')]
-            click(at, 'Add medication')
-            added_names = [item for item in at.text_input if item.label.startswith('Name #')]
-            self.assertEqual(len(added_names), len(initial_names) + 1)
-            self.assertEqual(added_names[-1].value, '')
+            self.assertFalse(any(item.label.startswith('Name #') for item in at.text_input))
+            self.assertFalse(any(button.label == 'Add medication' for button in at.button))
 
         source = (Path(__file__).parents[1] / 'app' / 'clinician_ui.py').read_text()
         self.assertIn('st.container(key="generation_controls")', source)
@@ -178,7 +179,7 @@ class UiChangesTests(unittest.TestCase):
             )
             self.assertTrue(any(escape(statement) in item.value for item in at.markdown))
 
-    def test_sidebar_edit_is_an_override_and_does_not_replace_team7_source(self):
+    def test_team7_order_is_read_only_and_used_unchanged_for_generation(self):
         from tests.test_ui_components import offline_app
 
         modules = {
@@ -188,9 +189,9 @@ class UiChangesTests(unittest.TestCase):
         }
         source_orders = {
             "fever_neutropenia": ClinicalOrders(
-                patient_id="SYN-OVERRIDE",
+                patient_id="SYN-READ-ONLY",
                 diagnosis="Fever and Neutropenia",
-                order_id="ORD-OVERRIDE",
+                order_id="ORD-READ-ONLY",
                 order_version="v1.2.0",
                 urgent_fever_threshold="100.4°F (38.0°C)",
                 emergency_fever_threshold="101°F (38.3°C)",
@@ -200,35 +201,26 @@ class UiChangesTests(unittest.TestCase):
 
         with offline_app(modules=modules, orders=source_orders):
             at = self.app()
-            next(item for item in at.text_input if item.label == "Urgent Fever:").input(
-                "100.5°F (38.1°C)"
-            ).run()
+            self.assertFalse(any(item.label == "Urgent Fever:" for item in at.text_input))
+            self.assertFalse(any(item.label.startswith("Name #") for item in at.text_input))
 
             preview = next(
                 item.value for item in at.markdown
                 if "<div class='clinical-orders-preview'>" in item.value
             )
-            self.assertIn("Physician overrides applied", preview)
+            self.assertNotIn("Physician overrides applied", preview)
             self.assertIn("100.4°F (38.0°C)", preview)
-            self.assertNotIn("100.5°F (38.1°C)", preview)
 
             click(at, "Generate Simplified Instructions")
             packet = at.session_state["current_packet"]
-            self.assertEqual(
-                packet.source_clinical_orders.urgent_fever_threshold,
-                "100.4°F (38.0°C)",
-            )
-            self.assertEqual(
-                packet.clinical_orders.urgent_fever_threshold,
-                "100.5°F (38.1°C)",
-            )
+            self.assertEqual(packet.source_clinical_orders, source_orders["fever_neutropenia"])
+            self.assertEqual(packet.clinical_orders, source_orders["fever_neutropenia"])
             reviewed_preview = next(
                 item.value for item in at.markdown
                 if "<div class='clinical-orders-preview'>" in item.value
             )
-            self.assertIn("Physician overrides applied", reviewed_preview)
+            self.assertNotIn("Physician overrides applied", reviewed_preview)
             self.assertIn("100.4°F (38.0°C)", reviewed_preview)
-            self.assertNotIn("100.5°F (38.1°C)", reviewed_preview)
 
     def test_non_github_source_is_blocked_even_without_error_detail(self):
         from tests.test_ui_components import offline_app
@@ -254,13 +246,14 @@ class UiChangesTests(unittest.TestCase):
                 ['Module', 'Status', 'Physician Decision', 'Timestamp'],
             )
 
-    def test_order_change_discards_stale_review(self):
+    def test_module_change_discards_stale_review(self):
         with phase3_app():
             at = self.app(); click(at, 'Generate Simplified Instructions')
-            next(t for t in at.text_input if t.label == 'Patient Age:').input('10 years old').run()
+            next(s for s in at.selectbox if s.label == 'Clinical Module:').select(
+                'fever_neutropenia'
+            ).run()
             self.assertIsNone(at.session_state['current_packet'])
             self.assertIsNone(at.session_state['checked_packet'])
-            self.assertTrue(any('10 years old' in m.value for m in at.markdown))
 
     def test_spanish_opt_in_renders_translation_review_and_publishes_on_approval(self):
         with phase3_app():

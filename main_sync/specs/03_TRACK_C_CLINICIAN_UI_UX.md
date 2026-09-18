@@ -33,11 +33,10 @@ Participant 3 owns the clinician-facing interface and review workflow:
   - Protocol choices require matching loaded templates and orders; module versions come from available content, not hardcoded labels.
   - Order Set Version displays the actual loaded version and order ID. The current loader exposes one order set per condition. Historical labels without archived content are not offered.
   - Do not display a redundant active-protocol summary beneath the selectors.
-- **Clinical Orders Customization**:
-  - Every field is initialized from the loaded Team7 order and acts as an explicit physician override: patient synthetic ID (shown as MRN), age, diagnosis, weight, medications, hydration, fever thresholds, red flags, contraindications, and contacts. Missing Team7 values start blank.
-  - Medication expanders (Name, Dose, Frequency, Route, Special instructions), with an Add medication control that appends a blank medication row.
-  - Fever threshold inputs use the exact loaded Team7 values. The UI does not supply default thresholds, routes, ages, or contact numbers.
-  - Daytime clinic, 24/7 triage, and emergency contact numbers.
+- **Read-Only Clinical Orders**:
+  - Team7 patient, diagnosis, weight, medication, hydration, threshold, red-flag, contraindication, and contact values are not exposed as sidebar inputs. There is no Add medication control or physician order-override path.
+  - Generation receives an unchanged deep copy of the selected Team7 order. Physicians make changes only in the simplified-instructions editor, after which Save and check edits re-runs the safety workflow.
+  - Missing Team7 values remain blank and are never replaced with UI defaults.
 - **Scenario C Drift Simulator Expander**:
   - Allows clinicians to test error detection by injecting simulated clinical contradictions, altered thresholds, or altered dosages.
 
@@ -48,7 +47,7 @@ Generation replaces those controls with FKGL (one decimal), verbatim percentage 
 
 1. **Original Clinical Orders & Instructions (Col 1)**:
    - Displays the complete, unsimplified Team7 module wording and immutable Team7 synthetic order snapshot. Every source instruction remains present verbatim; formatting may add visual headings and spacing but cannot rewrite, omit, or supplement clinical information. The same source renderer is used before and after generation.
-   - When sidebar values differ from the Team7 order, an override notice names the changed fields. The original pane continues to show Team7 values. Generation, safety evaluation, export, and review history use the separately recorded effective order containing the physician overrides.
+   - Generation, safety evaluation, export, and review history use an independent unchanged copy of that Team7 order. The only physician-editable clinical content is the simplified-English editor.
 2. **Simplified English Handout (Col 2)**:
    - Displays LLM1 simplified English with restored order values (required FKGL 5.0–6.9). Live generation allows three attempts. If readability, protected values, or the safety judge fails, the simplified draft remains visible with its failure reason and a not-for-patient-use warning. Clinician edits must pass fresh checks before approval.
    - Telemetry badges: FKGL score, verbatim lock status (matches/mismatches), and Safety Judge verdict.
@@ -69,7 +68,6 @@ Generation replaces those controls with FKGL (one decimal), verbatim percentage 
   - `clean_backup_packet`: Unaltered generated packet (used for diffing and reverting).
   - `review_inputs`: Hash of module/version/source, orders, selected models, and drift scenario. Any change clears the current review, checks and PDF before rendering.
   - `spanish_requested`: Translation choice for the generated review; remains fixed during rechecking.
-  - Clinical-order widgets are keyed by module and source-order contents to prevent stale values across modules or refreshes.
   - `edits_checked_banner`: Boolean triggering re-evaluation success banner.
 
 ### 2.4 Action Footer & Review Governance
