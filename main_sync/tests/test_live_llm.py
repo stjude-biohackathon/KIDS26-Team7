@@ -131,6 +131,7 @@ class LiveLlmCallTests(unittest.TestCase):
         result = live_llm.judge_safety(client, "deploy", "orig", "simplified", synthetic_orders())
         self.assertIsInstance(result, SafetyJudgeResult)
         self.assertEqual(result.overall_verdict, "PASS")
+        self.assertIsNone(result.failure_category)
         self.assertEqual(result.explanation, "Looks fine.")
 
     def test_judge_safety_strips_code_fences(self):
@@ -144,12 +145,35 @@ class LiveLlmCallTests(unittest.TestCase):
         client.chat.completions.create.side_effect = RuntimeError("PRIVATE_CANARY network detail")
         result = live_llm.judge_safety(client, "deploy", "orig", "simplified", synthetic_orders())
         self.assertEqual(result.overall_verdict, "FLAGGED_FOR_REVIEW")
+        self.assertEqual(result.failure_category, "REQUEST_FAILED")
         self.assertNotIn("PRIVATE_CANARY", result.explanation)
 
     def test_judge_safety_never_raises_on_malformed_json(self):
         client = self._mock_client("not valid json at all")
         result = live_llm.judge_safety(client, "deploy", "orig", "simplified", synthetic_orders())
         self.assertEqual(result.overall_verdict, "FLAGGED_FOR_REVIEW")
+        self.assertEqual(result.failure_category, "INVALID_JSON")
+
+    def test_judge_safety_reports_safe_failure_categories(self):
+        cases = (
+            ("   ", "EMPTY_RESPONSE"),
+            ('{"overall_verdict":"PASS"}', "INVALID_SCHEMA"),
+            (
+                '{"overall_verdict":"PASS","factual_drift_detected":false,'
+                '"omitted_red_flags":[],"contradictory_advice":[],'
+                '"clinical_risk_score":0,"explanation":"[[CLEAR_broken_0]]"}',
+                "PROTECTED_MARKER_ERROR",
+            ),
+        )
+        for response, expected in cases:
+            with self.subTest(expected=expected):
+                result = live_llm.judge_safety(
+                    self._mock_client(response), "deploy", "orig", "simplified",
+                    synthetic_orders(),
+                )
+                self.assertEqual(result.overall_verdict, "FLAGGED_FOR_REVIEW")
+                self.assertEqual(result.failure_category, expected)
+                self.assertIn(expected, result.explanation)
 
 
 if __name__ == "__main__":

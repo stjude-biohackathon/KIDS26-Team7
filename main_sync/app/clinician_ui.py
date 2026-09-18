@@ -627,10 +627,12 @@ else:
     with m_col3:
         judge = metrics.safety_judge
         verdict = judge.overall_verdict if judge else "UNAVAILABLE"
+        judge_failure = judge.failure_category if judge else None
         st.metric(
             label="Judge Review",
             value={"PASS": "PASS", "NEEDS_REVIEW": "REVIEW", "FLAGGED_FOR_REVIEW": "FLAGGED"}.get(verdict, verdict),
-            delta=None,
+            delta=(judge_failure.replace("_", " ").title() if judge_failure else None),
+            delta_color="inverse" if judge_failure else "normal",
             help=(judge.explanation.strip() if judge and judge.explanation.strip() else "Independent LLM2 factual safety verdict."),
         )
     with m_col4:
@@ -671,8 +673,7 @@ else:
              judge.omitted_red_flags or judge.contradictory_advice)):
         st.error(
             "DRAFT — NOT FOR PATIENT USE. The safety review did not pass. "
-            "The simplified version remains visible for clinician review, but "
-            "approval is blocked."
+
         )
 
     if metrics.safety_judge and metrics.safety_judge.factual_drift_detected:

@@ -93,6 +93,7 @@ class UiChangesTests(unittest.TestCase):
             safety_judge=SafetyJudgeResult(
                 overall_verdict='FLAGGED_FOR_REVIEW',
                 explanation='A source instruction may be missing.',
+                failure_category='INVALID_SCHEMA',
             ),
         )
         with phase3_app(), patch(
@@ -109,5 +110,7 @@ class UiChangesTests(unittest.TestCase):
             notices = [item.value for item in at.error]
             self.assertTrue(any('readability' in item.lower() for item in notices))
             self.assertTrue(any('safety review' in item.lower() for item in notices))
+            judge_metric = next(item for item in at.metric if item.label == 'Judge Review')
+            self.assertEqual(judge_metric.delta, 'Invalid Schema')
             click(at, 'Approve & Publish')
             self.assertEqual(at.session_state['current_packet'].status, 'PENDING')

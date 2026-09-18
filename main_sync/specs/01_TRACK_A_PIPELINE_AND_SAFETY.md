@@ -48,7 +48,7 @@ Participant 1 owns the multi-LLM generation, translation, and safety verificatio
       "explanation": "Brief rationale"
     }
     ```
-  - **Resilience Rule**: If the Safety Judge API fails or times out, catch the exception and mark `overall_verdict="FLAGGED_FOR_REVIEW"` without halting the clinician workflow.
+  - **Resilience Rule**: If the Safety Judge cannot complete, catch the failure and mark `overall_verdict="FLAGGED_FOR_REVIEW"` without halting the clinician workflow. Record only a safe category—`REQUEST_FAILED`, `EMPTY_RESPONSE`, `INVALID_JSON`, `INVALID_SCHEMA`, or `PROTECTED_MARKER_ERROR`—and never retain exception details or raw model output in the result.
 
 ### 2.4 Optional Bilingual Dual Translation
 - The UI defaults to English-only and passes `translate=False` to `generate_live` and `recheck_edits_live`; skip both translation calls and leave both fields empty. LLM2 still judges English, and all English readability/value gates apply. The API retains `translate=True` as its compatibility default; UI callers always pass the explicit family preference.

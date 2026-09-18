@@ -15,6 +15,10 @@ from pipeline.text_formatting import to_editor_plain_text
 
 from schemas.instruction_packet import ClinicalOrders, SafetyJudgeResult
 
+
+class _EmptyModelResponseError(ValueError):
+    """A model request succeeded but did not contain usable text."""
+
 _SIMPLIFY_SYSTEM_PROMPT = (
     "Change the language, not the information. Preserve every instruction, fact, "
     "condition, exception, warning, and clinical value. "
@@ -76,7 +80,7 @@ def _chat(client, deployment: str, system_prompt: str, user_content: str) -> str
     )
     content = response.choices[0].message.content
     if not content or not content.strip():
-        raise ValueError("Model returned an empty response.")
+        raise _EmptyModelResponseError("Model returned an empty response.")
     return content.strip()
 
 
@@ -151,6 +155,26 @@ def back_translate_to_english(client, deployment: str, translated_es: str) -> st
     return protected.restore(_chat(client, deployment, _BACK_TRANSLATE_SYSTEM_PROMPT, protected.masked))
 
 
+def _judge_failure(category: str) -> SafetyJudgeResult:
+    """Return a safe diagnostic without including exceptions or model output."""
+    messages = {
+        "REQUEST_FAILED": "The Safety Judge request did not complete.",
+        "EMPTY_RESPONSE": "The Safety Judge returned no review content.",
+        "INVALID_JSON": "The Safety Judge response was not valid JSON.",
+        "INVALID_SCHEMA": "The Safety Judge response did not match the required fields and types.",
+        "PROTECTED_MARKER_ERROR": "The Safety Judge response contained an invalid protected marker.",
+    }
+    return SafetyJudgeResult(
+        overall_verdict="FLAGGED_FOR_REVIEW",
+        factual_drift_detected=False,
+        omitted_red_flags=[],
+        contradictory_advice=[],
+        clinical_risk_score=0.0,
+        explanation=f"{category}: {messages[category]} Manual review is required.",
+        failure_category=category,
+    )
+
+
 def judge_safety(
     client, deployment: str, original_text: str, simplified_en: str, orders: ClinicalOrders
 ) -> SafetyJudgeResult:
@@ -167,10 +191,24 @@ def judge_safety(
     )
     try:
         protected = ProtectedText(user_content)
+    except ProtectionError:
+        return _judge_failure("PROTECTED_MARKER_ERROR")
+
+    try:
         raw = _chat(client, deployment, _SAFETY_JUDGE_SYSTEM_PROMPT, protected.masked)
+    except _EmptyModelResponseError:
+        return _judge_failure("EMPTY_RESPONSE")
+    except Exception:
+        return _judge_failure("REQUEST_FAILED")
+
+    try:
         # Models sometimes wrap JSON in a code fence despite instructions.
         cleaned = raw.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
         payload = json.loads(cleaned)
+    except json.JSONDecodeError:
+        return _judge_failure("INVALID_JSON")
+
+    try:
         required = {"overall_verdict", "factual_drift_detected", "omitted_red_flags", "contradictory_advice", "clinical_risk_score", "explanation"}
         if not isinstance(payload, dict) or not required.issubset(payload):
             raise ValueError("Incomplete judge audit.")
@@ -193,14 +231,9 @@ def judge_safety(
             clinical_risk_score=float(payload.get("clinical_risk_score", 0.0)),
             explanation=protected.restore(str(payload.get("explanation", "")), require_all=False),
         )
+    except ProtectionError:
+        return _judge_failure("PROTECTED_MARKER_ERROR")
     except Exception:
-        # Do not include exception details: they may echo request/response
-        # content, and the resilience rule only requires a safe fallback verdict.
-        return SafetyJudgeResult(
-            overall_verdict="FLAGGED_FOR_REVIEW",
-            factual_drift_detected=False,
-            omitted_red_flags=[],
-            contradictory_advice=[],
-            clinical_risk_score=0.0,
-            explanation="Safety Judge call failed or returned an unparseable response; flagged for manual review.",
-        )
+        # Invalid values are intentionally reduced to a category. Exception
+        # details and raw output may contain clinical text and are never stored.
+        return _judge_failure("INVALID_SCHEMA")

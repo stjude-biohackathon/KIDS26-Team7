@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import List, Literal, Optional
 from pydantic import BaseModel, Field
 
 
@@ -38,6 +38,13 @@ class SafetyJudgeResult(BaseModel):
     contradictory_advice: List[str] = Field(default_factory=list)
     clinical_risk_score: float = 0.0
     explanation: str = ""
+    failure_category: Optional[Literal[
+        "REQUEST_FAILED",
+        "EMPTY_RESPONSE",
+        "INVALID_JSON",
+        "INVALID_SCHEMA",
+        "PROTECTED_MARKER_ERROR",
+    ]] = None
 
 
 class EvaluationMetrics(BaseModel):
