@@ -139,14 +139,14 @@ class TestTrackCComponents(unittest.TestCase):
         metrics = evaluate_text_verbatim_and_fkgl(full_text, self.orders)
         self.assertEqual(len(metrics.verbatim_mismatches), 0)
         self.assertEqual(metrics.verbatim_match_percent, 100.0)
-        self.assertEqual(metrics.safety_judge.overall_verdict, "PASS")
+        self.assertEqual(metrics.safety_judge.overall_verdict, "NEEDS_REVIEW")
 
         # Test missing dose mismatch
         missing_text = "Give medicine regularly. Call 901-595-3300 for fever 100.4°F. Emergency 911."
         mismatch_metrics = evaluate_text_verbatim_and_fkgl(missing_text, self.orders)
         self.assertIn("200 mg", mismatch_metrics.verbatim_mismatches)
         self.assertIn("5 mg", mismatch_metrics.verbatim_mismatches)
-        self.assertEqual(mismatch_metrics.safety_judge.overall_verdict, "NEEDS_REVIEW")
+        self.assertEqual(mismatch_metrics.safety_judge.overall_verdict, "FLAGGED_FOR_REVIEW")
 
     def test_drift_simulator_injections(self):
         # Test Altered Medication Dose

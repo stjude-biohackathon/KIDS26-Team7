@@ -22,7 +22,8 @@ Participant 3 owns the clinician-facing interface and review workflow:
 
 ### 2.1 Sidebar Architecture (`app/clinician_ui.py`)
 - **AI Model Selection**:
-  - LLM1 dropdown: Default `gpt52`, options: `gpt52`, `gpt4o`, `gpt56luna`, `kimik3`, `copus5`, `local1`, `local2`.
+  - Generation mode: Offline demo or Live. Live failures are explicit and do not substitute mock output. Scenario C always runs locally.
+  - LLM1 Spanish-translation dropdown: Default `gpt4o`, options: `gpt52`, `gpt4o`, `gpt56luna`, `kimik3`, `copus5`, `local1`, `local2`.
   - LLM2 dropdown: Default `gpt4o`, options: `gpt52`, `gpt4o`, `gpt56luna`, `kimik3`, `copus5`, `local1`, `local2`.
 - **Data Source Status Badge**:
   - Visual indicator showing:
@@ -32,8 +33,8 @@ Participant 3 owns the clinician-facing interface and review workflow:
     ```
   - Includes a `🔄` refresh button that clears `st.cache_data` and reruns the script.
 - **Protocol Version Selectors**:
-  - Module Version dropdown (e.g. `v1.2.0`, `v1.1.0`).
-  - Order Set Version dropdown (e.g. `v1.2.0 (ORD-SCD-01)`).
+  - Protocol choices require matching loaded templates and orders; module versions come from available content, not hardcoded labels.
+  - Order Set Version displays the actual loaded version and order ID. The current loader exposes one order set per condition. Historical labels without archived content are not offered.
   - Protocol summary badge displaying active versions.
 - **Clinical Orders Customization**:
   - Patient synthetic ID, age, diagnosis.
@@ -48,7 +49,7 @@ The main content area is structured into 4 balanced columns:
 1. **Original Clinical Orders & Instructions (Col 1)**:
    - Displays raw, unsimplified clinical-grade instruction modules combined with personalized physician orders.
 2. **Simplified English Handout (Col 2)**:
-   - Displays generated plain-language instructions (target: 5th–6th grade).
+   - Displays supplied clinical English and bound order values (target: 5th–6th grade). Models never rewrite this wording.
    - Telemetry badges: FKGL score, verbatim lock status (matches/mismatches), and Safety Judge verdict.
    - Interactive `st.text_area` for clinician inline edits.
 3. **Spanish Translation (Col 3)**:
@@ -71,13 +72,17 @@ The main content area is structured into 4 balanced columns:
 ### 2.4 Action Footer & Review Governance
 - **Button 1: "Save and check edits"**:
   - Re-runs automated quality gates (FKGL readability + verbatim locks) on user-edited text.
-  - Re-generates Spanish translation and back-translation to match edits.
+  - Re-generates Spanish translation and back-translation to match edits. Successful checks are bound to the exact packet revision; later edits invalidate eligibility.
+  - A failed live recheck blocks approval. Local re-evaluation may produce a pending revision with translations cleared; do not substitute mock Spanish.
   - **Status Invariant**: Keeps status as `PENDING` (does not approve or publish).
   - Renders an informative banner: "Edits re-evaluated and checked. Click 'Approve & publish' when ready to finalize."
 - **Button 2: "Approve & publish" (Sole Approval Gate)**:
+  - Requires current-revision checks, finite readability evaluation, a passing judge without unresolved findings, exact protected values in all output panes, and an authorized Spanish-review attestation for that revision.
+  - Attestation resets for a new revision and is recorded in clinician notes; credential authentication is not implemented.
+  - Build the PDF before persisting approval. Export failure leaves the packet pending.
   - If text was edited, sets status to `EDITED_AND_APPROVED`.
   - If unedited, sets status to `APPROVED`.
-  - Saves record to `versioned_instructions.jsonl`.
+  - Saves an independent record in the session-only review library; no clinical data is written to disk.
   - Unlocks PDF download button with "Approved by physician" or "Edited and approved by physician" banner.
 - **Button 3: "Reject & log drift"**:
   - Opens modal dialog requiring drift taxonomy categorization:
@@ -86,7 +91,7 @@ The main content area is structured into 4 balanced columns:
     - `Omitted critical red flag`
     - `Contradictory clinical advice`
     - `Spanish translation drift`
-  - Sets status to `REJECTED_DRIFT`, logs to library, and generates rejected PDF handout.
+  - Requires a pending packet; captures current editor text in a separate revision when changed. Builds the rejected audit PDF before saving and sets `REJECTED_DRIFT` only after success. Cancel or export failure leaves the original unchanged.
 
 ### 2.5 Library Explorer
 - Expander title: **"View versioned library records"** (reflecting both approved and rejected records).
@@ -96,6 +101,7 @@ The main content area is structured into 4 balanced columns:
   - `Condition`
   - `Status`
   - `Physician Decision` (`Approved by physician`, `Edited and approved by physician`, `Rejected by physician`)
+  - `Parent Packet` and `Simulation`
   - `PDF Annotation`
   - `FKGL Grade`
   - `Verbatim Match %`
@@ -108,3 +114,9 @@ The main content area is structured into 4 balanced columns:
 3. Editing text in Col 2 and clicking "Save and check edits" re-scores readability without crashing Streamlit.
 4. "Approve & publish" commits packet to library and generates valid PDF with physician badge.
 5. "Reject & log drift" captures reason and displays rejected annotation in library table.
+
+### Phase 3 UX behavior
+- No decorative emojis in application controls or exported review banners.
+- The library explains its session-only lifetime. Independent browser sessions cannot read each other's reviewed packets.
+- Synthetic drift packets are prominently marked and cannot be approved.
+- Back-translated English remains a meaning-comparison pane, without a separate FKGL score. Its protected values still participate in approval checks.

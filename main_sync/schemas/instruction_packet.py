@@ -54,6 +54,8 @@ class InstructionPacket(BaseModel):
     """Canonical data container binding inputs, simplified outputs, telemetry, and review governance."""
 
     packet_id: str
+    parent_packet_id: Optional[str] = None
+    is_simulation: bool = False
     condition: str
     module_version: str = "v1.0.0"
     order_version: str = "v1.0.0"

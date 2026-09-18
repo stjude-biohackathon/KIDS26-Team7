@@ -85,15 +85,16 @@ class LiveLlmCallTests(unittest.TestCase):
         ]
         return client
 
-    def test_simplify_returns_model_text(self):
-        client = self._mock_client("Give 5 mg by mouth every day.")
-        result = live_llm.simplify_to_plain_language(client, "deploy", "source", synthetic_orders())
-        self.assertEqual(result, "Give 5 mg by mouth every day.")
+    def test_clinical_rewriting_is_disabled(self):
+        client = self._mock_client("Unvetted model wording")
+        with self.assertRaises(ValueError):
+            live_llm.simplify_to_plain_language(client, "deploy", "source", synthetic_orders())
+        client.chat.completions.create.assert_not_called()
 
     def test_empty_model_response_raises(self):
         client = self._mock_client("   ")
         with self.assertRaises(ValueError):
-            live_llm.simplify_to_plain_language(client, "deploy", "source", synthetic_orders())
+            live_llm.translate_to_spanish(client, "deploy", "source")
 
     def test_judge_safety_parses_well_formed_json(self):
         payload = (
@@ -108,7 +109,7 @@ class LiveLlmCallTests(unittest.TestCase):
         self.assertEqual(result.explanation, "Looks fine.")
 
     def test_judge_safety_strips_code_fences(self):
-        payload = '```json\n{"overall_verdict": "NEEDS_REVIEW", "explanation": "ok"}\n```'
+        payload = '```json\n{"overall_verdict":"NEEDS_REVIEW","factual_drift_detected":false,"omitted_red_flags":[],"contradictory_advice":[],"clinical_risk_score":0,"explanation":"ok"}\n```'
         client = self._mock_client(payload)
         result = live_llm.judge_safety(client, "deploy", "orig", "simplified", synthetic_orders())
         self.assertEqual(result.overall_verdict, "NEEDS_REVIEW")

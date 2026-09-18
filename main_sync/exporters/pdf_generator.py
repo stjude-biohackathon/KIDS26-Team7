@@ -7,6 +7,8 @@ Adheres strictly to specs/02_TRACK_B_DATA_AND_STORAGE.md.
 from __future__ import annotations
 
 import io
+import re
+from html import escape
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -15,21 +17,28 @@ from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
+from pipeline.evaluator import extract_verbatim_tokens
+
 from schemas.instruction_packet import (
     InstructionPacket,
     get_physician_annotation,
 )
 
 
-def _format_for_reportlab(text: str) -> str:
-    """Safely format multi-line text into ReportLab Platypus Paragraph XML."""
+def _format_for_reportlab(text: str, protected_values=()) -> str:
+    """Escape supplied text, retaining line breaks and bolding protected values."""
     if not text:
         return ""
-    # XML entity escaping (excluding existing basic formatting tags)
-    clean = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-    # Restore safe line breaks and bold markers
-    clean = clean.replace("\n", "<br/>")
-    return clean
+    values = sorted(set(protected_values), key=len, reverse=True)
+    if not values:
+        return escape(text).replace("\n", "<br/>")
+    pattern = re.compile(r"(?<![\w.,/+\-])(?:" + "|".join(re.escape(v) for v in values) + r")(?!\w|\s*/|\.\d)")
+    parts, offset = [], 0
+    for match in pattern.finditer(text):
+        parts.extend([escape(text[offset:match.start()]), "<b>" + escape(match.group()) + "</b>"])
+        offset = match.end()
+    parts.append(escape(text[offset:]))
+    return "".join(parts).replace("\n", "<br/>")
 
 
 def create_bilingual_pdf(packet: InstructionPacket) -> bytes:
@@ -101,26 +110,26 @@ def create_bilingual_pdf(packet: InstructionPacket) -> bytes:
         bg_col = colors.HexColor("#F0FFF4")
         border_col = colors.HexColor("#38A169")
         txt_col = colors.HexColor("#22543D")
-        banner_msg = f"✔ {annotation.upper()} — Final Plain-Language Handout"
+        banner_msg = f" {annotation.upper()} — Reviewed Bilingual Handout"
     elif status == "EDITED_AND_APPROVED":
         bg_col = colors.HexColor("#EBF8FF")
         border_col = colors.HexColor("#3182CE")
         txt_col = colors.HexColor("#2A4365")
-        banner_msg = f"✎ {annotation.upper()} — Verified Plain-Language Handout"
+        banner_msg = f" {annotation.upper()} — Reviewed Bilingual Handout"
     elif status == "REJECTED_DRIFT":
         bg_col = colors.HexColor("#FFF5F5")
         border_col = colors.HexColor("#E53E3E")
         txt_col = colors.HexColor("#742A2A")
         reason = packet.rejection_reason or "Clinical drift detected"
-        banner_msg = f"✖ {annotation.upper()} — NOTICE: {reason}"
+        banner_msg = f" {annotation.upper()} — NOTICE: {reason}"
     else:
         bg_col = colors.HexColor("#FFFAF0")
         border_col = colors.HexColor("#DD6B20")
         txt_col = colors.HexColor("#7B341E")
         banner_msg = f"⏳ {annotation.upper()}"
 
-    banner_p = Paragraph(f"<font color='{txt_col.hexval()}'>{banner_msg}</font>", banner_style)
-    banner_table = Table([[banner_p]], colWidths=[540])
+    banner_p = Paragraph(f"<font color='{txt_col.hexval()}'>{_format_for_reportlab(banner_msg)}</font>", banner_style)
+    banner_table = Table([[banner_p]], colWidths=[doc.width - 12], splitInRow=1)
     banner_table.setStyle(
         TableStyle([
             ("BACKGROUND", (0, 0), (-1, -1), bg_col),
@@ -136,21 +145,30 @@ def create_bilingual_pdf(packet: InstructionPacket) -> bytes:
 
     # Patient Metadata Summary
     patient_info = (
-        f"<b>Patient ID:</b> {packet.clinical_orders.patient_id} &nbsp;|&nbsp; "
-        f"<b>Age:</b> {packet.clinical_orders.age or 'N/A'} &nbsp;|&nbsp; "
-        f"<b>Diagnosis:</b> {packet.clinical_orders.diagnosis}"
+        f"<b>Patient ID:</b> {escape(packet.clinical_orders.patient_id)} &nbsp;|&nbsp; "
+        f"<b>Age:</b> {escape(packet.clinical_orders.age or 'N/A')} &nbsp;|&nbsp; "
+        f"<b>Diagnosis:</b> {escape(packet.clinical_orders.diagnosis)}"
     )
     elements.append(Paragraph(patient_info, meta_style))
     elements.append(Spacer(1, 8))
 
     # 2-Column Side-by-Side Grid
-    en_formatted = _format_for_reportlab(packet.simplified_en)
-    es_formatted = _format_for_reportlab(packet.translated_es)
+    values = extract_verbatim_tokens(packet.clinical_orders)
+    en_formatted = _format_for_reportlab(packet.simplified_en, values)
+    es_formatted = _format_for_reportlab(packet.translated_es, values)
 
-    col_en = Paragraph(f"<b>ENGLISH (5th–6th Grade)</b><br/><br/>{en_formatted}", cell_style)
-    col_es = Paragraph(f"<b>ESPAÑOL (Instrucciones para la Familia)</b><br/><br/>{es_formatted}", cell_style)
+    col_en = Paragraph(en_formatted, cell_style)
+    col_es = Paragraph(es_formatted, cell_style)
 
-    content_table = Table([[col_en, col_es]], colWidths=[265, 265])
+    # The frame adds 6pt padding on each side of doc.width. Split within
+    # long cells so a single paragraph can span pages without truncation.
+    content_table = Table(
+        [[Paragraph("<b>ENGLISH</b>", cell_style),
+          Paragraph("<b>ESPAÑOL (Instrucciones para la Familia)</b>", cell_style)],
+         [col_en, col_es]],
+        colWidths=[(doc.width - 12) / 2] * 2,
+        repeatRows=1, splitByRow=1, splitInRow=1,
+    )
     content_table.setStyle(
         TableStyle([
             ("VALIGN", (0, 0), (-1, -1), "TOP"),
@@ -166,13 +184,24 @@ def create_bilingual_pdf(packet: InstructionPacket) -> bytes:
     timestamp = packet.reviewed_at or packet.created_at or datetime.now(timezone.utc).isoformat()
     clean_ts = timestamp[:19].replace("T", " ")
     footer_text = (
-        f"Protocol: {packet.condition} | Module: {packet.module_version} | Order Set: {packet.order_version} | "
-        f"Packet ID: {packet.packet_id}<br/>"
+        f"Protocol: {escape(packet.condition)} | Module: {escape(packet.module_version)} | Order Set: {escape(packet.order_version)} | "
+        f"Packet ID: {escape(packet.packet_id)}<br/>"
         f"Physician Verification: {annotation} | Recorded: {clean_ts} UTC | Signature: __________________________"
     )
     elements.append(Paragraph(footer_text, footer_style))
 
-    doc.build(elements)
+    def page_footer(canvas, document):
+        canvas.saveState()
+        canvas.setFont("Helvetica", 8)
+        label = "REJECTED AUDIT COPY - NOT FOR PATIENT USE" if packet.status == "REJECTED_DRIFT" else (
+            "SYNTHETIC SIMULATION - NOT FOR PATIENT USE" if packet.is_simulation else (
+                "DRAFT - NOT FOR PATIENT USE" if packet.status == "PENDING" else annotation
+            )
+        )
+        canvas.drawString(36, 20, label)
+        canvas.drawRightString(letter[0] - 36, 20, f"Page {document.page}")
+        canvas.restoreState()
+    doc.build(elements, onFirstPage=page_footer, onLaterPages=page_footer)
     buf.seek(0)
     return buf.getvalue()
 

@@ -146,14 +146,14 @@ class ModelErrorDescriptionTests(unittest.TestCase):
     """specs/05 FIX-C2: failures must be described honestly, without secrets."""
 
     def test_unconfigured_alias_reported_as_configuration_problem(self):
-        from pipeline.llms import describe_model_error
+        from pipeline.llms import describe_model_error, ModelConfigurationError
 
-        msg = describe_model_error("kimik3", ValueError("No endpoint/credentials configured"))
+        msg = describe_model_error("kimik3", ModelConfigurationError("No endpoint/credentials configured"))
         self.assertIn("kimik3", msg)
         self.assertIn("no endpoint or credentials configured", msg)
 
     def test_access_denied_distinguished_from_missing_configuration(self):
-        from pipeline.llms import describe_model_error
+        from pipeline.llms import describe_model_error, ModelConfigurationError
 
         exc = Exception("Access denied due to Virtual Network/Firewall rules.")
         exc.status_code = 403
@@ -163,7 +163,7 @@ class ModelErrorDescriptionTests(unittest.TestCase):
         self.assertNotIn("configured for this model alias", msg)
 
     def test_unreachable_endpoint_reported_as_connection_failure(self):
-        from pipeline.llms import describe_model_error
+        from pipeline.llms import describe_model_error, ModelConfigurationError
 
         class APIConnectionError(Exception):
             pass
@@ -172,7 +172,7 @@ class ModelErrorDescriptionTests(unittest.TestCase):
         self.assertIn("could not reach", msg)
 
     def test_description_never_echoes_credentials_or_endpoint(self):
-        from pipeline.llms import describe_model_error
+        from pipeline.llms import describe_model_error, ModelConfigurationError
 
         secret = "sk-supersecretkey1234"
         endpoint = "https://private-resource.openai.azure.com"

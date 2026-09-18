@@ -6,6 +6,8 @@ Authoritative Implementation adhering to specs/03_TRACK_C_CLINICIAN_UI_UX.md.
 from __future__ import annotations
 
 import copy
+import hashlib
+from html import escape
 import json
 import sys
 from datetime import datetime, timezone
@@ -18,6 +20,9 @@ if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
 import streamlit as st
+
+from app.review import approval_blockers, reject_revision, REJECTION_CATEGORIES
+from pipeline.drift import DRIFT_MODES, inject_drift
 
 # Safe imports: Try canonical modules first, fall back to mock components
 try:
@@ -82,7 +87,7 @@ except ImportError:
     HAS_LIVE_LOADER = False
 
 try:
-    from pipeline.orchestrator import PipelineOrchestrator
+    from pipeline.orchestrator import PipelineOrchestrator, compose_clinical_text
     from pipeline.llms import describe_model_error
     HAS_LIVE_PIPELINE = True
 except ImportError:
@@ -140,7 +145,7 @@ def _load_templates_and_orders():
 # ---------------------------------------------------------------------------
 st.set_page_config(
     page_title="CLEAR — Clinician Review Dashboard",
-    page_icon="🩺",
+    page_icon="C",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -231,19 +236,13 @@ if "live_pipeline_reason" not in st.session_state:
 # ---------------------------------------------------------------------------
 # Rejection Modal Dialog (Governance Requirement 2.4)
 # ---------------------------------------------------------------------------
-@st.dialog("Reject & Log Clinical Drift")
+@st.dialog("Reject & Log Clinical Drift", dismissible=False)
 def reject_packet_dialog(packet: InstructionPacket):
-    st.warning("⚠️ You are rejecting this instruction packet due to detected clinical drift or safety violation.")
+    st.warning("You are rejecting this instruction packet due to detected clinical drift or safety violation.")
     
     drift_category = st.selectbox(
         "Drift Taxonomy Categorization *",
-        options=[
-            "Unsafe dosage alteration",
-            "Altered return/fever threshold",
-            "Omitted critical red flag",
-            "Contradictory clinical advice",
-            "Spanish translation drift",
-        ],
+        options=list(REJECTION_CATEGORIES),
         index=0,
     )
     explanation = st.text_area(
@@ -259,30 +258,26 @@ def reject_packet_dialog(packet: InstructionPacket):
                 st.error("Please provide an explanation for the audit log.")
                 return
             
-            packet.status = "REJECTED_DRIFT"
-            packet.rejection_category = drift_category
-            packet.rejection_reason = explanation.strip()
-            packet.physician_decision = "Rejected by physician"
-            packet.reviewed_at = datetime.now(timezone.utc).isoformat()
-            
-            # Persist to library
-            if HAS_LIVE_STORAGE:
-                live_save_gold(packet)
+            try:
+                candidate = reject_revision(
+                    packet, st.session_state.get("txt_clinician_en", packet.simplified_en),
+                    drift_category, explanation,
+                )
+                pdf_data = live_pdf_gen(candidate)
+                live_save_gold(candidate)
+            except Exception:
+                st.error("Rejection could not be saved. Check the text and retry; the original review is unchanged.")
             else:
-                save_to_gold_library(packet)
-            
-            # Generate rejected PDF
-            if HAS_LIVE_PDF:
-                st.session_state["pdf_bytes"] = live_pdf_gen(packet)
-            else:
-                st.session_state["pdf_bytes"] = generate_handout_pdf(packet)
-                
-            st.session_state["edits_checked_banner"] = False
-            st.success("Rejection logged to audit library.")
-            st.rerun()
-            
+                st.session_state["current_packet"] = candidate
+                st.session_state["pdf_bytes"] = pdf_data
+                st.session_state["checked_packet"] = None
+                st.session_state["reject_dialog_packet_id"] = None
+                st.session_state["edits_checked_banner"] = False
+                st.rerun()
+
     with col_cancel:
         if st.button("Cancel"):
+            st.session_state["reject_dialog_packet_id"] = None
             st.rerun()
 
 
@@ -290,17 +285,19 @@ def reject_packet_dialog(packet: InstructionPacket):
 # Sidebar: Model, Protocol, & Orders Configuration (specs/03 Section 2.1)
 # ---------------------------------------------------------------------------
 with st.sidebar:
-    st.title("🩺 CLEAR Controls")
-    st.caption("AI-Assisted Pediatric Discharge Instruction Simplification with Clinician-in-the-Loop")
+    st.title("CLEAR Controls")
+    st.caption("Bilingual Pediatric Discharge Instruction Review")
 
+    generation_mode = st.radio("Generation mode:", ["Offline demo", "Live"], horizontal=True)
+    st.caption("Offline demo makes no model calls. Live mode translates supplied clinical wording; it does not rewrite English.")
     st.subheader("1. AI Model Selection")
     model_options = ["gpt52", "gpt4o", "gpt56luna", "kimik3", "copus5", "local1", "local2"]
     
     selected_llm1 = st.selectbox(
-        "LLM 1 (Simplifier & Spanish):",
+        "LLM 1 (Spanish translation):",
         options=model_options,
         index=model_options.index("gpt4o"),
-        help="Model responsible for 5th–6th grade plain-language simplification and Spanish translation.",
+        help="Translates supplied clinical English to Spanish with numeric values protected.",
     )
     selected_llm2 = st.selectbox(
         "LLM 2 (Safety Judge & Back-EN):",
@@ -320,7 +317,7 @@ with st.sidebar:
     with col_badge:
         if data_source_is_live:
             st.markdown(
-                "**Source:** ☁️ GitHub App (In-Memory, No Local Copy)<br/>"
+                "**Source:**  GitHub App (In-Memory, No Local Copy)<br/>"
                 "<small style='color: #059669;'>Zero local copies • In-memory stream</small>",
                 unsafe_allow_html=True,
             )
@@ -328,32 +325,40 @@ with st.sidebar:
             # Credentials exist but the live load did not succeed: say so
             # rather than showing a green badge over bundled fixtures.
             st.markdown(
-                "**Source:** ⚠️ Bundled Synthetic Fixtures<br/>"
+                "**Source:**  Bundled Synthetic Fixtures<br/>"
                 "<small style='color: #B91C1C;'>GitHub App configured but live load failed</small>",
                 unsafe_allow_html=True,
             )
         else:
             st.markdown(
-                "**Source:** 🧪 Offline Mock Fixtures<br/>"
+                "**Source:**  Offline Mock Fixtures<br/>"
                 "<small style='color: #B45309;'>GitHub App not configured — using bundled synthetic data</small>",
                 unsafe_allow_html=True,
             )
     with col_ref:
-        if st.button("🔄", help="Clear cache and reload remote protocols from GitHub App"):
+        if st.button("Refresh", help="Clear cache and reload remote protocols from GitHub App"):
             st.cache_data.clear()
             st.rerun()
 
     if not data_source_is_live and load_status.get("error"):
-        st.caption(f"⚠️ Data load reason: {load_status['error']}")
+        st.caption(f" Data load reason: {load_status['error']}")
     for warning in load_status.get("warnings", []):
-        st.caption(f"ℹ️ Upstream data quality: {warning}")
+        st.caption(f"ℹ Upstream data quality: {warning}")
 
     st.divider()
     st.subheader("3. Protocol & Module Version")
     
+    available_conditions = [
+        name for name, versions in live_templates.items()
+        if name in live_orders and any(text.strip() for text in versions.values())
+    ]
+    if not available_conditions:
+        st.session_state["live_data_notice"] = True
+        st.warning("Live clinical data unavailable: no matching protocols and orders with usable content.")
+        st.stop()
     condition = st.selectbox(
         "Clinical Module:",
-        options=["sickle_cell_pain", "fever_neutropenia", "chemo_nausea_hydration"],
+        options=available_conditions,
         format_func=lambda x: {
             "sickle_cell_pain": "Sickle Cell Acute Pain",
             "fever_neutropenia": "Fever & Neutropenia (Oncology)",
@@ -361,11 +366,15 @@ with st.sidebar:
         }.get(x, x),
     )
 
+    base_order = live_orders[condition]
+    module_versions = [v for v, text in live_templates[condition].items() if text.strip()]
     col_mv, col_ov = st.columns(2)
     with col_mv:
-        module_version = st.selectbox("Module Ver:", options=["v1.2.0", "v1.1.0"], index=0)
+        module_version = st.selectbox("Module Ver:", options=module_versions, index=0, key=f"module_version_{condition}")
     with col_ov:
-        order_version = st.selectbox("Order Set Ver:", options=["v1.2.0 (ORD-01)", "v1.1.0 (ORD-00)"], index=0)
+        order_version = st.selectbox("Order Set Ver:", options=[base_order.order_version], index=0,
+                                     format_func=lambda v: f"{v} ({base_order.order_id})",
+                                     key=f"order_version_{condition}_{base_order.order_id}")
 
     st.info(f"Active Protocol: `{condition}` | `{module_version}` | `{order_version}`")
 
@@ -373,9 +382,11 @@ with st.sidebar:
     st.subheader("4. Clinical Orders Customization")
 
     # Load base order for the selected condition (live-fetched or mock fallback)
-    base_order = live_orders.get(condition, live_orders.get("sickle_cell_pain") or MOCK_ORDERS["sickle_cell_pain"])
+    # The loader currently exposes one actual order set per condition.
+    # Do not offer invented historical versions or substitute another condition.
+    order_widget_key = hashlib.sha256(base_order.model_dump_json().encode()).hexdigest()
     
-    patient_id = st.text_input("Patient ID (De-identified):", value=base_order.patient_id)
+    patient_id = st.text_input("Synthetic Patient ID:", value=base_order.patient_id)
     age = st.text_input("Patient Age:", value=base_order.age or "8 years old")
     diagnosis = st.text_input("Diagnosis:", value=base_order.diagnosis)
 
@@ -384,11 +395,11 @@ with st.sidebar:
         med_list: List[MedicationOrder] = []
         for i, m in enumerate(base_order.medications):
             st.markdown(f"**Medication {i+1}**")
-            m_name = st.text_input(f"Name #{i+1}:", value=m.name, key=f"med_name_{i}")
-            m_dose = st.text_input(f"Dose #{i+1}:", value=m.dose, key=f"med_dose_{i}")
-            m_freq = st.text_input(f"Frequency #{i+1}:", value=m.frequency, key=f"med_freq_{i}")
-            m_route = st.text_input(f"Route #{i+1}:", value=m.route, key=f"med_route_{i}")
-            m_spec = st.text_input(f"Instructions #{i+1}:", value=m.special_instructions, key=f"med_spec_{i}")
+            m_name = st.text_input(f"Name #{i+1}:", value=m.name, key=f"med_name_{condition}_{order_widget_key}_{i}")
+            m_dose = st.text_input(f"Dose #{i+1}:", value=m.dose, key=f"med_dose_{condition}_{order_widget_key}_{i}")
+            m_freq = st.text_input(f"Frequency #{i+1}:", value=m.frequency, key=f"med_freq_{condition}_{order_widget_key}_{i}")
+            m_route = st.text_input(f"Route #{i+1}:", value=m.route, key=f"med_route_{condition}_{order_widget_key}_{i}")
+            m_spec = st.text_input(f"Instructions #{i+1}:", value=m.special_instructions, key=f"med_spec_{condition}_{order_widget_key}_{i}")
             med_list.append(
                 MedicationOrder(
                     name=m_name,
@@ -443,47 +454,57 @@ with st.sidebar:
     with st.expander("Negative Safety Test Injections", expanded=False):
         drift_mode = st.selectbox(
             "Simulate Safety Failure:",
-            options=["None", "Contradictory Advice", "Altered Fever Threshold", "Altered Medication Dose"],
+            options=["None", *DRIFT_MODES],
             index=0,
             help="Inject synthetic hallucinations to test automated regex locks and Safety Judge alarms.",
         )
 
     st.divider()
-    if st.button("🚀 Generate Instructions", type="primary", use_container_width=True):
+    if st.button("Generate Instructions", type="primary", width="stretch"):
         with st.spinner("Processing plain-language simplification, quality gates, and translations..."):
-            raw_template = live_templates.get(condition, {}).get(module_version, "")
-            packet = None
+            raw_template = live_templates[condition][module_version]
+            live_checked = False
             live_failed = False
             live_reason = ""
-            # A missing template while live data is expected is a data problem,
-            # not a model problem: report it instead of silently using mocks.
-            data_unavailable = data_source_is_live and not raw_template.strip()
-            # The drift simulator injects errors into the mock templates directly;
-            # it is not meaningful to ask a live model to simplify a corrupted
-            # template, so drift tests always use the offline mock pipeline.
-            if HAS_LIVE_PIPELINE and drift_mode == "None" and raw_template.strip():
-                try:
-                    orchestrator = PipelineOrchestrator(llm1_model=selected_llm1, llm2_model=selected_llm2)
+            data_unavailable = False
+            try:
+                if not active_orders.patient_id.startswith("SYN-"):
+                    raise ValueError("This prototype requires a synthetic patient ID beginning with SYN-.")
+                orchestrator = PipelineOrchestrator(llm1_model=selected_llm1, llm2_model=selected_llm2)
+                if drift_mode != "None":
+                    # Scenario C never contacts models or alters upstream data.
+                    baseline = orchestrator.generate(
+                        compose_clinical_text(raw_template, active_orders), active_orders,
+                        module_version=module_version, condition=condition,
+                    )
+                    packet = inject_drift(baseline, drift_mode)
+                elif generation_mode == "Live":
                     packet = orchestrator.generate_live(
                         raw_template, active_orders, module_version=module_version, condition=condition,
                     )
-                except Exception as exc:
-                    live_failed = True
-                    live_reason = describe_model_error(selected_llm1, exc)
-                    packet = None
-
-            if packet is None:
-                packet = run_mock_pipeline(
-                    condition=condition,
-                    module_version=module_version,
-                    orders=active_orders,
-                    llm1_model=selected_llm1,
-                    llm2_model=selected_llm2,
-                    drift_mode=drift_mode,
-                )
+                    live_checked = True
+                elif (not data_source_is_live and condition in MOCK_MODULES
+                      and module_version in MOCK_MODULES[condition]):
+                    packet = run_mock_pipeline(condition, module_version, active_orders)
+                else:
+                    packet = orchestrator.generate(
+                        compose_clinical_text(raw_template, active_orders), active_orders,
+                        module_version=module_version, condition=condition,
+                    )
+            except Exception as exc:
+                st.session_state["current_packet"] = None
+                st.session_state["checked_packet"] = None
+                st.session_state["pdf_bytes"] = None
+                st.error("Generation failed. No packet was published. " + describe_model_error(selected_llm1, exc))
+                st.stop()
+            st.session_state["reject_dialog_packet_id"] = None
+            st.session_state["edit_check_error"] = None
             st.session_state["live_pipeline_notice"] = live_failed
             st.session_state["live_pipeline_reason"] = live_reason
             st.session_state["live_data_notice"] = data_unavailable
+            st.session_state["checked_packet"] = (
+                packet.model_dump(mode="json") if live_checked else None
+            )
             st.session_state["current_packet"] = packet
             st.session_state["clean_backup_packet"] = copy.deepcopy(packet)
             st.session_state["edits_checked_banner"] = False
@@ -496,24 +517,26 @@ with st.sidebar:
 # ---------------------------------------------------------------------------
 # Main Content Area: 4-Way Comparative Review Pane (specs/03 Section 2.2)
 # ---------------------------------------------------------------------------
-st.markdown("## 🏥 Pediatric Discharge Instructions — Clinician Review")
+st.markdown("##  Pediatric Discharge Instructions — Clinician Review")
 
 packet: Optional[InstructionPacket] = st.session_state.get("current_packet")
 
 if packet is None:
-    st.info("👈 Select parameters in the sidebar and click **'🚀 Generate Instructions'** to begin.")
+    st.info("Select parameters in the sidebar and click **' Generate Instructions'** to begin.")
 else:
     if st.session_state.get("live_pipeline_notice"):
         reason = st.session_state.get("live_pipeline_reason") or "reason unavailable"
         st.warning(
-            "⚠️ Live model call unavailable; showing offline mock output instead. "
+            " Live model call unavailable; showing offline mock output instead. "
             f"Reason — {reason}"
         )
     if st.session_state.get("live_data_notice"):
         st.warning(
-            "⚠️ Live clinical data unavailable for this module/version "
+            " Live clinical data unavailable for this module/version "
             "(no upstream template matched); showing offline mock output instead."
         )
+    if packet.is_simulation:
+        st.error("SYNTHETIC DRIFT SIMULATION — not for patient use. Review and reject this test packet.")
     # Patient Banner & Status Line
     col_info, col_stat = st.columns([3, 1])
     with col_info:
@@ -525,17 +548,17 @@ else:
     with col_stat:
         annotation = get_physician_annotation(packet)
         if packet.status == "APPROVED":
-            st.success(f"✔ {annotation}")
+            st.success(f" {annotation}")
         elif packet.status == "EDITED_AND_APPROVED":
-            st.info(f"✎ {annotation}")
+            st.info(f" {annotation}")
         elif packet.status == "REJECTED_DRIFT":
-            st.error(f"✖ {annotation}")
+            st.error(f" {annotation}")
         else:
             st.warning(f"⏳ {annotation}")
 
     # Re-evaluation notice banner if edits were recently checked
     if st.session_state.get("edits_checked_banner", False):
-        st.info("ℹ️ **Edits re-evaluated and checked.** Status remains `PENDING`. Click **'Approve & publish'** when ready to finalize.")
+        st.info("ℹ **Edits re-evaluated and checked.** Status remains `PENDING`. Click **'Approve & publish'** when ready to finalize.")
 
     # 4 Balanced Columns
     col1, col2, col3, col4 = st.columns(4)
@@ -564,7 +587,7 @@ else:
             f"=== PROTOCOL TEMPLATE ({packet.module_version}) ===\n"
             f"{packet.original_clinical_text}"
         )
-        st.markdown(f"<div class='clinical-box'>{orig_text}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='clinical-box'>{escape(orig_text)}</div>", unsafe_allow_html=True)
 
     # ---------------------------------------------------------
     # Column 2: Simplified English Handout (with Inline Editing)
@@ -578,15 +601,15 @@ else:
         m_col1, m_col2 = st.columns(2)
         with m_col1:
             st.metric(
-                label="📖 FKGL Readability",
+                label="FKGL Readability",
                 value=f"{metrics.fkgl_score}",
-                delta="Target: 5.0–6.9" if 4.0 <= metrics.fkgl_score <= 6.9 else "Out of Range",
-                delta_color="normal" if 4.0 <= metrics.fkgl_score <= 6.9 else "inverse",
+                delta="Target: 5.0–6.9" if 5.0 <= metrics.fkgl_score <= 6.9 else "Out of Range",
+                delta_color="normal" if 5.0 <= metrics.fkgl_score <= 6.9 else "inverse",
                 help="Flesch-Kincaid Grade Level calculated via textstat. Pediatric discharge goal is 5th–6th grade.",
             )
         with m_col2:
             st.metric(
-                label="🔒 Verbatim Score",
+                label="Verbatim Score",
                 value=f"{metrics.verbatim_match_percent:.1f}%",
                 delta=f"{len(metrics.verbatim_matches)} locked" if len(metrics.verbatim_mismatches) == 0 else f"{len(metrics.verbatim_mismatches)} missing",
                 delta_color="normal" if len(metrics.verbatim_mismatches) == 0 else "inverse",
@@ -596,35 +619,35 @@ else:
         badge_html = "<div style='margin-top: 4px; margin-bottom: 6px;'>"
         
         # FKGL Badge
-        if 4.0 <= metrics.fkgl_score <= 6.9:
-            badge_html += f"<span class='metric-badge-pass'>🟢 FKGL: {metrics.fkgl_score}</span>"
+        if 5.0 <= metrics.fkgl_score <= 6.9:
+            badge_html += f"<span class='metric-badge-pass'> FKGL: {metrics.fkgl_score}</span>"
         else:
-            badge_html += f"<span class='metric-badge-warn'>🟡 FKGL: {metrics.fkgl_score} (Target 5-6)</span>"
+            badge_html += f"<span class='metric-badge-warn'> FKGL: {metrics.fkgl_score} (Target 5-6)</span>"
             
         # Verbatim Lock Badge
         if len(metrics.verbatim_mismatches) == 0:
-            badge_html += f"<span class='metric-badge-pass'>🟢 Verbatim: {metrics.verbatim_match_percent:.1f}%</span>"
+            badge_html += f"<span class='metric-badge-pass'> Verbatim: {metrics.verbatim_match_percent:.1f}%</span>"
         else:
-            badge_html += f"<span class='metric-badge-danger'>🔴 Verbatim: {metrics.verbatim_match_percent:.1f}% ({len(metrics.verbatim_mismatches)} Missing)</span>"
+            badge_html += f"<span class='metric-badge-danger'> Verbatim: {metrics.verbatim_match_percent:.1f}% ({len(metrics.verbatim_mismatches)} Missing)</span>"
             
         # Safety Judge Badge
         if metrics.safety_judge and metrics.safety_judge.overall_verdict == "PASS":
-            badge_html += "<span class='metric-badge-pass'>🟢 Judge: PASS</span>"
+            badge_html += "<span class='metric-badge-pass'> Judge: PASS</span>"
         elif metrics.safety_judge and metrics.safety_judge.overall_verdict == "NEEDS_REVIEW":
-            badge_html += "<span class='metric-badge-warn'>🟡 Judge: REVIEW</span>"
+            badge_html += "<span class='metric-badge-warn'> Judge: REVIEW</span>"
         elif metrics.safety_judge:
-            badge_html += "<span class='metric-badge-danger'>🔴 Judge: FLAGGED</span>"
+            badge_html += "<span class='metric-badge-danger'> Judge: FLAGGED</span>"
             
         badge_html += "</div>"
         st.markdown(badge_html, unsafe_allow_html=True)
         
         if metrics.verbatim_mismatches:
-            st.caption(f"<small style='color: #DC2626;'>⚠️ Missing safety tokens: {', '.join(metrics.verbatim_mismatches)}</small>", unsafe_allow_html=True)
+            st.caption(f"<small style='color: #DC2626;'> Missing safety tokens: {', '.join(metrics.verbatim_mismatches)}</small>", unsafe_allow_html=True)
         elif metrics.verbatim_matches:
-            st.caption(f"<small style='color: #03543F;'>🔒 Locked safety tokens: {', '.join(metrics.verbatim_matches)}</small>", unsafe_allow_html=True)
+            st.caption(f"<small style='color: #03543F;'> Locked safety tokens: {', '.join(metrics.verbatim_matches)}</small>", unsafe_allow_html=True)
 
         if metrics.safety_judge and metrics.safety_judge.factual_drift_detected:
-            st.caption(f"<small style='color: #DC2626;'>🚨 Safety Alert: {metrics.safety_judge.explanation}</small>", unsafe_allow_html=True)
+            st.caption(f"<small style='color: #DC2626;'> Safety Alert: {metrics.safety_judge.explanation}</small>", unsafe_allow_html=True)
 
         # Interactive text area with two-way binding
         # Invariant: Read directly from session state; never mutate key downstream
@@ -640,16 +663,16 @@ else:
     # ---------------------------------------------------------
     with col3:
         st.markdown("<div class='col-header'>3. Spanish Handout (LLM 1)</div>", unsafe_allow_html=True)
-        st.markdown(f"<div class='clinical-box'>{packet.translated_es}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='clinical-box'>{escape(packet.translated_es)}</div>", unsafe_allow_html=True)
 
     # ---------------------------------------------------------
     # Column 4: Back-Translated English
     # ---------------------------------------------------------
     with col4:
         st.markdown("<div class='col-header'>4. Back-Translated English (LLM 2)</div>", unsafe_allow_html=True)
-        st.markdown(f"<div class='clinical-box'>{packet.back_translated_en}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='clinical-box'>{escape(packet.back_translated_en)}</div>", unsafe_allow_html=True)
 
-    st.caption("ℹ️ Back-translation allows English-speaking clinicians to inspect and verify Spanish translation fidelity.")
+    st.caption("ℹ Back-translation allows English-speaking clinicians to inspect and verify Spanish translation fidelity.")
 
     st.divider()
 
@@ -658,98 +681,98 @@ else:
     # ---------------------------------------------------------
     st.subheader("Physician Action & Review Governance")
 
+    if st.session_state.get("edit_check_error"):
+        st.error(st.session_state["edit_check_error"])
+    # A new or edited revision requires a fresh human attestation.
+    review_key = hashlib.sha256(packet.model_dump_json().encode()).hexdigest()
+    spanish_reviewed = st.checkbox(
+        "I am an authorized medical translator or credentialed bilingual clinician and have verified this Spanish translation.",
+        key=f"spanish_review_{review_key}",
+    )
+
     btn_col1, btn_col2, btn_col3, btn_col4 = st.columns([1.2, 1.2, 1.2, 1.5])
 
     # 1. Save and check edits
     with btn_col1:
-        if st.button("✏️ Save & Check Edits", use_container_width=True, help="Re-runs readability and verbatim checks while keeping status PENDING"):
+        if st.button("Save & Check Edits", width="stretch", help="Re-runs readability and verbatim checks while keeping status PENDING"):
             edited_text = st.session_state.get("txt_clinician_en", packet.simplified_en)
 
-            revised_packet = None
-            recheck_live_failed = False
-            recheck_reason = ""
-            if HAS_LIVE_PIPELINE:
-                try:
-                    orchestrator = PipelineOrchestrator(llm1_model=selected_llm1, llm2_model=selected_llm2)
-                    revised_packet = orchestrator.recheck_edits_live(packet, edited_text)
-                except Exception as exc:
-                    revised_packet = None
-                    recheck_live_failed = True
-                    recheck_reason = describe_model_error(selected_llm1, exc)
-            # Surface a live re-check outage instead of silently substituting
-            # the offline mock re-translation (specs/05 FIX-C2).
-            st.session_state["live_pipeline_notice"] = recheck_live_failed
-            st.session_state["live_pipeline_reason"] = recheck_reason
-
-            if revised_packet is not None:
-                packet = revised_packet
-            else:
-                packet.simplified_en = edited_text
-                packet.edited_by_physician = True
-
-                # Re-evaluate FKGL and verbatim checks
-                new_metrics = evaluate_text_verbatim_and_fkgl(edited_text, packet.clinical_orders)
-                packet.evaluation_metrics = new_metrics
-
-                # Offline fallback: re-run mock translation updates
-                packet.translated_es = (
-                    f"[Traducción actualizada con ediciones del médico]:\n\n"
-                    + edited_text.replace("Here is your child's care plan", "Este es el plan de cuidado de su hijo")
-                    .replace("Give", "Dé")
-                    .replace("Call immediately", "Llame de inmediato")
-                )
-                packet.back_translated_en = (
-                    f"[Back-translation of updated physician edits]:\n\n"
-                    + edited_text
-                )
-
-                # Governance Invariant: status remains PENDING
-                packet.status = "PENDING"
-                packet.physician_decision = "Pending physician review"
-
-            st.session_state["current_packet"] = packet
-            st.session_state["edits_checked_banner"] = True
+            if not edited_text.strip():
+                st.error("Enter English instructions before checking edits.")
+                st.stop()
+            # Invalidate earlier checks before any external request can fail.
+            st.session_state["checked_packet"] = None
             st.session_state["pdf_bytes"] = None
+            try:
+                orchestrator = PipelineOrchestrator(llm1_model=selected_llm1, llm2_model=selected_llm2)
+                if generation_mode != "Live" or packet.is_simulation:
+                    raise ValueError("Choose Live to regenerate translations; offline checks keep approval blocked.")
+                packet = orchestrator.recheck_edits_live(packet, edited_text)
+            except Exception as exc:
+                # Local checks can still run, but cannot certify a translation.
+                try:
+                    packet = PipelineOrchestrator().recheck_edits(packet, edited_text)
+                except Exception:
+                    st.session_state["edits_checked_banner"] = False
+                    st.error("Recheck failed. No approval is available; retry the checks.")
+                    st.stop()
+                st.session_state["edit_check_error"] = (
+                    "Translation recheck failed; approval remains blocked. "
+                    + describe_model_error(selected_llm1, exc)
+                )
+                st.session_state["edits_checked_banner"] = False
+            else:
+                st.session_state["checked_packet"] = packet.model_dump(mode="json")
+                st.session_state["edit_check_error"] = None
+                st.session_state["edits_checked_banner"] = True
+            st.session_state["current_packet"] = packet
             st.rerun()
 
 
     # 2. Approve & publish (Sole Approval Gate)
     with btn_col2:
-        if st.button("✔ Approve & Publish", type="primary", use_container_width=True):
+        if st.button("Approve & Publish", type="primary", width="stretch"):
             edited_text = st.session_state.get("txt_clinician_en", packet.simplified_en)
-            backup_text = st.session_state["clean_backup_packet"].simplified_en if st.session_state.get("clean_backup_packet") else packet.simplified_en
-            
-            if edited_text.strip() != backup_text.strip():
-                packet.status = "EDITED_AND_APPROVED"
-                packet.edited_by_physician = True
+            blockers = approval_blockers(
+                packet, edited_text, st.session_state.get("checked_packet"), spanish_reviewed,
+            )
+            if blockers:
+                for reason in blockers:
+                    st.error(reason)
             else:
-                packet.status = "APPROVED"
-                packet.edited_by_physician = False
-                
-            packet.simplified_en = edited_text
-            packet.physician_decision = get_physician_annotation(packet)
-            packet.reviewed_at = datetime.now(timezone.utc).isoformat()
-            
-            # Persist to versioned library
-            if HAS_LIVE_STORAGE:
-                live_save_gold(packet)
-            else:
-                save_to_gold_library(packet)
-                
-            # Generate finalized bilingual PDF
-            if HAS_LIVE_PDF:
-                pdf_data = live_pdf_gen(packet)
-            else:
-                pdf_data = generate_handout_pdf(packet)
-                
-            st.session_state["pdf_bytes"] = pdf_data
-            st.session_state["edits_checked_banner"] = False
-            st.success(f"✔ Successfully saved as **{packet.physician_decision}**.")
-            st.rerun()
+                candidate = packet.model_copy(deep=True)
+                backup = st.session_state.get("clean_backup_packet")
+                was_edited = candidate.edited_by_physician or (
+                    backup is not None and edited_text != backup.simplified_en
+                )
+                candidate.status = "EDITED_AND_APPROVED" if was_edited else "APPROVED"
+                candidate.edited_by_physician = was_edited
+                candidate.physician_decision = get_physician_annotation(candidate)
+                candidate.reviewed_at = datetime.now(timezone.utc).isoformat()
+                candidate.clinician_notes = (
+                    (candidate.clinician_notes or "")
+                    + "\nReviewer attested to authorized Spanish verification for this revision."
+                ).strip()
+                try:
+                    # Build first: a failed export must not persist an approval.
+                    pdf_data = live_pdf_gen(candidate) if HAS_LIVE_PDF else generate_handout_pdf(candidate)
+                    if HAS_LIVE_STORAGE:
+                        live_save_gold(candidate)
+                    else:
+                        save_to_gold_library(candidate)
+                except Exception:
+                    st.error("Publishing failed. The packet remains pending; retry after resolving the export or storage error.")
+                else:
+                    st.session_state["current_packet"] = candidate
+                    st.session_state["pdf_bytes"] = pdf_data
+                    st.session_state["edits_checked_banner"] = False
+                    st.rerun()
 
     # 3. Reject & log drift
     with btn_col3:
-        if st.button("✖ Reject & Log Drift", use_container_width=True):
+        if st.button("Reject & Log Drift", width="stretch", disabled=packet.status != "PENDING"):
+            st.session_state["reject_dialog_packet_id"] = packet.packet_id
+        if st.session_state.get("reject_dialog_packet_id") == packet.packet_id:
             reject_packet_dialog(packet)
 
     # 4. PDF Download Button (Available once reviewed)
@@ -757,21 +780,22 @@ else:
         pdf_data = st.session_state.get("pdf_bytes")
         if pdf_data is not None:
             st.download_button(
-                label=f"📄 Download PDF Handout ({packet.status})",
+                label=f"Download PDF Handout ({packet.status})",
                 data=pdf_data,
                 file_name=f"discharge_handout_{packet.packet_id}.pdf",
                 mime="application/pdf",
-                use_container_width=True,
+                width="stretch",
             )
         else:
-            st.button("📄 PDF Handout (Locked until approved/rejected)", disabled=True, use_container_width=True)
+            st.button("PDF Handout (Locked until approved/rejected)", disabled=True, width="stretch")
 
 
 # ---------------------------------------------------------------------------
 # Library Explorer (specs/03 Section 2.5)
 # ---------------------------------------------------------------------------
 st.divider()
-with st.expander("📚 View versioned library records", expanded=False):
+with st.expander("View versioned library records", expanded=False):
+    st.caption("Records are private to this session and disappear when it ends. No clinical records are written to disk.")
     if HAS_LIVE_STORAGE:
         records = live_load_gold()
     else:
@@ -784,6 +808,9 @@ with st.expander("📚 View versioned library records", expanded=False):
         for r in reversed(records):
             table_rows.append({
                 "Packet ID": r.packet_id,
+                "Parent Packet": r.parent_packet_id or "—",
+                "PDF Annotation": get_physician_annotation(r),
+                "Simulation": r.is_simulation,
                 "Timestamp": r.created_at[:19].replace("T", " ") if r.created_at else "",
                 "Condition": r.condition,
                 "Status": r.status,
@@ -794,4 +821,4 @@ with st.expander("📚 View versioned library records", expanded=False):
                 "Rejection Reason": r.rejection_reason or "—",
                 "Reviewed At": r.reviewed_at[:19].replace("T", " ") if r.reviewed_at else "—",
             })
-        st.dataframe(table_rows, use_container_width=True)
+        st.dataframe(table_rows, width="stretch")

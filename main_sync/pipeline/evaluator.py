@@ -132,3 +132,20 @@ def evaluate_text(text: str, orders: ClinicalOrders) -> EvaluationMetrics:
             ),
         ),
     )
+
+
+def red_flag_lines(text: str) -> list[str]:
+    """Conservative exact-line guard for source warnings in clinical English."""
+    return [line for line in text.splitlines() if line.strip() and re.search(
+        r'red.flag|call (?:immediately|if)|seek help|chest pain|emergency room', line, re.I)]
+
+
+def content_findings(source: str, candidate: str, orders: ClinicalOrders) -> tuple[list[str], list[str]]:
+    """Missing source warnings and new safety values may not be waived by an LLM."""
+    missing = [line for line in red_flag_lines(source) if line not in candidate]
+    reference = source + '\n' + ' '.join(extract_verbatim_tokens(orders))
+    unexpected = []
+    for kind in ('dose', 'temperature', 'phone'):
+        allowed = set(extract_safety_values(reference, kind))
+        unexpected.extend(value for value in extract_safety_values(candidate, kind) if value not in allowed)
+    return missing, unexpected

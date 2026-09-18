@@ -8,7 +8,7 @@
 
 ## 1. Responsibilities & Objectives
 Participant 1 owns the multi-LLM generation, translation, and safety verification engine:
-1. **LLM1 Plain-Language Simplification**: Rewrites clinical instructions into 5th–6th grade language while preserving critical orders.
+1. **Vetted English Composition**: Binds supplied versioned wording and structured orders. English clinical prose is never rewritten by AI; clinicians provide/edit plain-language wording.
 2. **Automated Quality Gate**: Measures FKGL readability via `textstat` and validates verbatim preservation of critical numbers using regex.
 3. **LLM2 Safety Judge**: Performs zero-shot safety audit checking for factual drift, omitted red flags, and dangerous contradictions.
 4. **Dual Translation**: Forward translation to Spanish (LLM1) and back-translation to English (LLM2) to expose translation drift.
@@ -18,15 +18,11 @@ Participant 1 owns the multi-LLM generation, translation, and safety verificatio
 
 ## 2. Component Specifications
 
-### 2.1 LLM1 Simplifier (`pipeline/orchestrator.py`)
-- **System Prompt Requirements**:
-  - Target Audience: Parents/guardians of pediatric patients.
-  - Grade Level Constraint: 5th–6th grade reading level (FKGL 5.0–6.9).
-  - Sentence Length: Maximum 15 words per sentence.
-  - Active Voice: Use direct, second-person action instructions ("Give your child...", "Call immediately if...").
-  - Anchor Preservation: Must copy medication names, numeric dosages, units, frequency, return temperature limits, and phone numbers without alteration.
-- **Inputs**: `composite_template_text: str`, `orders: ClinicalOrders`.
-- **Output**: `simplified_en: str`.
+### 2.1 Vetted English Composer (`pipeline/orchestrator.py`)
+- `compose_clinical_text` binds template placeholders and appends supplied structured order fields when required values are absent. It does not invent clinical instructions.
+- LLM1 is used for protected Spanish translation only. The former AI simplifier entry point fails explicitly.
+- Inputs: versioned clinical source and `ClinicalOrders`; output: `simplified_en` (legacy schema name for the reviewed English pane).
+- Target FKGL remains 5.0–6.9. Source authors/clinician edits must achieve it; generation does not promise a reading level automatically.
 
 ### 2.2 Automated Quality Gate (`pipeline/evaluator.py`)
 - **Readability Metric**:
@@ -68,10 +64,19 @@ Participant 1 owns the multi-LLM generation, translation, and safety verificatio
 - Resolves credentials dynamically from `[model_name]` or role-based sections in `.streamlit/secrets.toml`.
 
 ### 2.6 Drift Simulator (Scenario C Negative Testing)
-Provides 3 selectable error injections:
+Provides 4 selectable synthetic error injections, operating on independent revisions:
 1. **Contradictory Advice**: "Withhold anti-emetic medications until patient vomits 5 times."
-2. **Altered Fever Threshold**: Replaces `100.4°F` and `101.0°F` with `104.5°F` and `105.0°F`.
-3. **Altered Medication Dose**: Doubles prescribed medication dose (e.g., `280 mg` -> `560 mg`).
+2. **Altered Fever Threshold**: Adds 4.1 to supplied temperature values, preserving units (e.g. `100.4°F` -> `104.5°F`).
+3. **Altered Medication Dose**: Doubles a supplied medication dose (e.g., `280 mg` -> `560 mg`).
+4. **Omitted Red Flag**: Removes a detected source warning line.
+
+No matching value/warning means the requested injection fails explicitly. Packets are marked `is_simulation`, retain parent revision identity, and cannot be approved. Tests inspect content changes, not merely the scenario label.
+
+### 2.7 Protection and Final Safety Vetoes
+- Translation/back-translation inputs mask numeric values and associated units before model calls. Restoration requires the exact sentinel multiset and rejects invented numbers.
+- Judge inputs are masked too; complete typed audit fields are required. Invalid, incomplete, or unavailable audits yield `FLAGGED_FOR_REVIEW`.
+- Required values must survive in English, Spanish, and back-translation. Additional unsupplied doses/thresholds/phone numbers and removed exact English source-warning lines block approval even if the judge says PASS.
+- These conservative checks do not certify clinical meaning. Authorized Spanish review remains a separate per-revision human attestation.
 
 ---
 

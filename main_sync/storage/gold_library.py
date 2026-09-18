@@ -1,75 +1,50 @@
-"""
-Track B: Versioned Library Storage.
-Appends reviewed packets to versioned_instructions.jsonl with status, timestamp, and audit trail.
-Adheres strictly to specs/02_TRACK_B_DATA_AND_STORAGE.md.
-"""
-
-from __future__ import annotations
-
-import json
-import os
+"""Session-scoped immutable review snapshots. Clinical records never touch disk."""
 from datetime import datetime, timezone
-from pathlib import Path
-from typing import List, Optional
 
-from schemas.instruction_packet import (
-    InstructionPacket,
-    get_physician_annotation,
-)
-
-DEFAULT_GOLD_LIBRARY_PATH = "data/gold_library/versioned_instructions.jsonl"
+from schemas.instruction_packet import InstructionPacket, get_physician_annotation
 
 
-def save_to_gold_library(
-    packet: InstructionPacket,
-    file_path: Optional[str] = None,
-) -> None:
-    """
-    Serializes InstructionPacket to JSON and appends as a single line with UTC timestamp.
-    Ensures immutability and audit logging for physician review decisions.
-    """
-    target_path = file_path or DEFAULT_GOLD_LIBRARY_PATH
-    parent_dir = os.path.dirname(target_path)
-    if parent_dir:
-        os.makedirs(parent_dir, exist_ok=True)
+class ReviewLibrary:
+    """A library owned by one session, with copies at both public boundaries."""
+    def __init__(self):
+        self._records: dict[str, InstructionPacket] = {}
+        self._inputs: dict[str, str] = {}
 
-    # Ensure physician decision and review timestamp are populated
-    if not packet.physician_decision:
-        packet.physician_decision = get_physician_annotation(packet)
-    if not packet.reviewed_at:
-        packet.reviewed_at = datetime.now(timezone.utc).isoformat()
+    def save(self, packet: InstructionPacket) -> None:
+        if packet.status not in {'APPROVED', 'EDITED_AND_APPROVED', 'REJECTED_DRIFT'}:
+            raise ValueError('Only reviewed packets can be saved.')
+        if packet.status == 'REJECTED_DRIFT' and not (
+            packet.rejection_category and packet.rejection_reason and packet.rejection_reason.strip()
+        ):
+            raise ValueError('A rejection requires a category and explanation.')
+        value = packet.model_dump_json()
+        if packet.packet_id in self._records:
+            if value in (self._inputs[packet.packet_id], self._records[packet.packet_id].model_dump_json()):
+                return
+            raise ValueError('A saved review cannot be overwritten. Create a new revision.')
+        saved = packet.model_copy(deep=True)
+        saved.physician_decision = get_physician_annotation(saved)
+        saved.reviewed_at = saved.reviewed_at or datetime.now(timezone.utc).isoformat()
+        self._records[saved.packet_id] = saved
+        self._inputs[saved.packet_id] = value
 
-    json_record = packet.model_dump_json()
-    with open(target_path, "a", encoding="utf-8") as f:
-        f.write(json_record + "\n")
+    def records(self) -> list[InstructionPacket]:
+        return [p.model_copy(deep=True) for p in self._records.values()]
 
 
-# Alias for compatibility with app/clinician_ui.py
+def _session_library() -> ReviewLibrary:
+    import streamlit as st
+    if 'review_library' not in st.session_state:
+        st.session_state['review_library'] = ReviewLibrary()
+    return st.session_state['review_library']
+
+
+def save_to_gold_library(packet: InstructionPacket, *, library: ReviewLibrary | None = None) -> None:
+    (library if library is not None else _session_library()).save(packet)
+
+
+def load_gold_records(*, library: ReviewLibrary | None = None) -> list[InstructionPacket]:
+    return (library if library is not None else _session_library()).records()
+
+
 save_gold_record = save_to_gold_library
-
-
-def load_gold_records(
-    file_path: Optional[str] = None,
-) -> List[InstructionPacket]:
-    """
-    Reads JSONL records from the versioned library and returns parsed InstructionPacket objects.
-    Returns empty list if the file does not exist or contains no records.
-    """
-    target_path = file_path or DEFAULT_GOLD_LIBRARY_PATH
-    if not os.path.exists(target_path):
-        return []
-
-    records: List[InstructionPacket] = []
-    with open(target_path, "r", encoding="utf-8") as f:
-        for line_num, line in enumerate(f, start=1):
-            line_str = line.strip()
-            if not line_str:
-                continue
-            try:
-                packet = InstructionPacket.model_validate_json(line_str)
-                records.append(packet)
-            except Exception as e:
-                # Corrupt line handling without crashing the entire viewer
-                continue
-
-    return records

@@ -1,7 +1,7 @@
 # 00: Project Architecture, Team Roles & Iterative Schedule
 
 ## 1. Executive Summary
-This project builds an AI-assisted pediatric discharge instruction simplification platform with clinician-in-the-loop review. It simplifies complex clinical instructions into plain-language, bilingual (English & Spanish) handouts targeted at a 5th–6th grade reading level, while enforcing strict verbatim locks on medication dosages, temperature return thresholds, and contact numbers.
+This project builds an AI-assisted pediatric discharge instruction simplification platform with clinician-in-the-loop review. It binds supplied clinical English and structured orders, then translates to Spanish with protected values. Clinician-vetted plain-language wording targets a 5th–6th grade reading level; no AI rewriting of English is allowed.
 
 The system is engineered to be built by three participants working in parallel across decoupled tracks with frequent, automated merge checkpoints:
 - **Track A (Participant 1)**: LLM Pipeline, Quality Gates & Safety Judge
@@ -51,16 +51,16 @@ track-c ───────┴──[Mock UI]────┴──┴──[Li
 ### Sync Point 1: Mocked End-to-End Core Loop (Day 1 Midday)
 - **Goal**: Connect mocked components into a functional local pipeline without API costs.
 - **Track A**: Returns deterministic rule-based simplified text, FKGL, and verbatim checks.
-- **Track B**: Returns mock templates/orders and writes to local test JSONL.
+- **Track B**: Returns mock templates/orders and retains independent reviews in session memory.
 - **Track C**: Streamlit dashboard renders 4 columns from mock orchestrator.
 - **Gate Test**: Clinician UI launches, generates a mock packet, and displays 4-way comparative pane without errors.
 
 ### Sync Point 2: Live Integrations (Day 1 EOD / Day 2 Morning)
 - **Goal**: Swap mocks for live external services.
-- **Track A**: Connects live LLM1 (simplifier + Spanish) and LLM2 (Safety Judge + back-translation) with dynamic model routing.
+- **Track A**: Connects live LLM1 (protected Spanish translation) and LLM2 (Safety Judge + back-translation) with dynamic model routing.
 - **Track B**: Implements live in-memory GitHub App REST loader (`stjude-biohackathon/team7-data`) with zero disk copies.
 - **Track C**: Wires dynamic model dropdowns, version selectors, and inline editing re-evaluation.
-- **Gate Test**: Full live run: GitHub App fetches data on the fly -> LLM1 simplifies -> LLM2 judges -> UI renders live stream.
+- **Gate Test**: Full live run: GitHub App fetches data on the fly -> vetted English is composed -> LLM1 translates -> LLM2 back-translates/judges -> UI renders live stream.
 
 ### Sync Point 3: Production UX, Hardening & Exporters (Day 2 Afternoon)
 - **Goal**: Feature freeze, safety verification, and polished artifacts.
@@ -75,3 +75,6 @@ track-c ───────┴──[Mock UI]────┴──┴──[Li
 - **09:00 Standup (15 min)**: Review previous sync point, unblock dependencies, confirm daily branch targets.
 - **12:30 Integration Check (30 min)**: Run merge dry-runs on integration branches; resolve schema or signature mismatches.
 - **17:00 EOD Merge & Demo (45 min)**: Merge approved PRs into `main`, run comprehensive test suite, demo progress to clinician advisors.
+
+## Current Phase 3 Status
+Software implementation and synthetic integration tests cover all three tracks. Clinical validation and an actual live-service acceptance run remain pending. No commit or merge is part of this implementation request. The session-only library supersedes earlier JSONL persistence instructions.

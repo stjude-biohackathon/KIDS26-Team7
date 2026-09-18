@@ -152,9 +152,8 @@ class TestInstructionPacketSchema(unittest.TestCase):
 
 class TestGoldLibraryStorage(unittest.TestCase):
     def setUp(self):
-        import tempfile
-        self.test_dir = tempfile.TemporaryDirectory()
-        self.test_jsonl = os.path.join(self.test_dir.name, "test_instructions.jsonl")
+        from storage.gold_library import ReviewLibrary
+        self.library = ReviewLibrary()
 
         from schemas.instruction_packet import ClinicalOrders, MedicationOrder, InstructionPacket
         self.orders = ClinicalOrders(
@@ -176,16 +175,12 @@ class TestGoldLibraryStorage(unittest.TestCase):
             status="APPROVED",
         )
 
-    def tearDown(self):
-        self.test_dir.cleanup()
-
     def test_save_and_load_gold_library(self):
         from storage.gold_library import save_to_gold_library, load_gold_records
 
-        save_to_gold_library(self.packet, file_path=self.test_jsonl)
-        self.assertTrue(os.path.exists(self.test_jsonl))
+        save_to_gold_library(self.packet, library=self.library)
 
-        records = load_gold_records(file_path=self.test_jsonl)
+        records = load_gold_records(library=self.library)
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0].packet_id, "PKT-TEST-FN01")
         self.assertEqual(records[0].status, "APPROVED")
@@ -194,15 +189,16 @@ class TestGoldLibraryStorage(unittest.TestCase):
     def test_gold_library_append_immutability(self):
         from storage.gold_library import save_gold_record, load_gold_records
 
-        save_gold_record(self.packet, file_path=self.test_jsonl)
+        save_gold_record(self.packet, library=self.library)
 
         # Second packet
         self.packet.packet_id = "PKT-TEST-FN02"
         self.packet.status = "REJECTED_DRIFT"
         self.packet.rejection_reason = "Altered fever threshold"
-        save_gold_record(self.packet, file_path=self.test_jsonl)
+        self.packet.rejection_category = "Altered return/fever threshold"
+        save_gold_record(self.packet, library=self.library)
 
-        records = load_gold_records(file_path=self.test_jsonl)
+        records = load_gold_records(library=self.library)
         self.assertEqual(len(records), 2)
         self.assertEqual(records[0].packet_id, "PKT-TEST-FN01")
         self.assertEqual(records[0].status, "APPROVED")

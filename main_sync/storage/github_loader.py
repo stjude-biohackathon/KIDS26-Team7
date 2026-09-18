@@ -407,17 +407,12 @@ def adapt_modules(raw: Dict[str, Any]) -> Dict[str, Dict[str, str]]:
     if not grouped:
         raise ValueError("Upstream modules payload contained no usable instructions.")
 
-    # Instruction content exists only for the file's current version; expose the
-    # same vetted text under each historical version label so the UI's version
-    # selector always resolves to real upstream wording.
-    versions: List[str] = []
-    for candidate in [raw.get("version")] + [
-        entry.get("version") for entry in (raw.get("version_history") or [])
-    ]:
-        if candidate and candidate not in versions:
-            versions.append(candidate)
-    if not versions:
+    # History metadata alone is not archived content. Only expose the version
+    # whose actual instructions were fetched; never relabel current wording.
+    current_version = raw.get("version")
+    if not current_version:
         raise ValueError("Upstream modules payload is missing version metadata.")
+    versions = [current_version]
 
     modules: Dict[str, Dict[str, str]] = {}
     for category, sections in grouped.items():

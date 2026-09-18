@@ -30,6 +30,10 @@ _DEFAULT_LOCAL_API_KEY = "local-no-key-required"
 _SECRETS_PATH = Path(".streamlit") / "secrets.toml"
 
 
+class ModelConfigurationError(ValueError):
+    """Required endpoint configuration is missing or invalid."""
+
+
 @dataclass(frozen=True)
 class ModelConfig:
     """Resolved, non-secret-printing connection details for one model alias."""
@@ -123,7 +127,7 @@ def resolve_model_config(alias: str) -> ModelConfig:
     unavailable.
     """
     if alias not in AVAILABLE_MODELS:
-        raise ValueError("Unsupported model alias; select an AVAILABLE_MODELS entry.")
+        raise ModelConfigurationError("Unsupported model alias; select an AVAILABLE_MODELS entry.")
 
     secrets = _load_secrets_section(alias)
     prefix = _env_prefix(alias)
@@ -155,7 +159,7 @@ def resolve_model_config(alias: str) -> ModelConfig:
     )
 
     if not base_url or not api_key:
-        raise ValueError(
+        raise ModelConfigurationError(
             f"No endpoint/credentials configured for model alias '{alias}'. "
             "Set [alias] in .streamlit/secrets.toml or the "
             f"{prefix}_BASE_URL/{prefix}_API_KEY environment variables."
@@ -210,8 +214,13 @@ def describe_model_error(alias: str, exc: Exception) -> str:
     endpoint URL, or request body (specs/05 FIX-C2).
     """
     name = type(exc).__name__
-    if isinstance(exc, ValueError):
+    if isinstance(exc, ModelConfigurationError):
         return f"{alias}: no endpoint or credentials configured for this model alias."
+    from pipeline.protection import ProtectionError
+    if isinstance(exc, ProtectionError):
+        return f"{alias}: protected clinical values were not preserved; translation was rejected."
+    if isinstance(exc, ValueError):
+        return f"{alias}: input or model-output validation failed; no checked packet was produced."
     status = getattr(exc, "status_code", None)
     if status in (401, 403):
         return (

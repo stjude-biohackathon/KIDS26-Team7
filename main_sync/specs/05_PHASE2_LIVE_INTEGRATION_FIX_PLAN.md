@@ -161,9 +161,9 @@ Add two pure, unit-testable functions:
   template string ordered by `handout_template_structure[]` (falling back to
   `type` grouping order for types absent from the structure list), joining each
   section's `instruction_text` entries under a readable section heading. Key the
-  result by the file's `version`, and also expose it under each entry of
-  `version_history[]` that has no distinct content so the existing UI version
-  selector (`v1.2.0`, `v1.1.0`) always resolves to real upstream text.
+  result only by the file's actual `version`. Phase 3 correction: historical
+  metadata without archived content must not relabel current wording; selectors
+  now derive their choices from the actual loaded content.
   The composer **binds and orders vetted text only — it must not rewrite,
   paraphrase, or generate clinical prose** (Zero AI-Originated Clinical Prose).
 - `adapt_orders(raw: dict) -> Dict[str, ClinicalOrders]`

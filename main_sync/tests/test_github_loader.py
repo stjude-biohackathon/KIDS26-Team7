@@ -253,8 +253,8 @@ class UpstreamSchemaAdapterTests(unittest.TestCase):
         self.assertEqual(
             set(modules.keys()), {"sickle_cell_pain", "chemo_nausea_hydration"}
         )
-        # Both the current version and the historical label resolve to real text.
-        self.assertEqual(set(modules["sickle_cell_pain"].keys()), {"v1.2.0", "v1.1.0"})
+        # Historical labels without archived text must not appear as selectable content.
+        self.assertEqual(set(modules["sickle_cell_pain"].keys()), {"v1.2.0"})
         text = modules["sickle_cell_pain"]["v1.2.0"]
 
         # Every vetted instruction_text is carried verbatim.
