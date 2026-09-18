@@ -11,6 +11,8 @@ The test runner uses synthetic fixtures and mocked external service boundaries. 
 
 ## Composition and translation
 
+All LLM prompt text is centralized in `pipeline/prompts.py` (system prompts per stage, the marker-preservation suffix, FKGL/protection retry fragments, and the Safety Judge user-content template). `pipeline/live_llm.py` imports them; no prompt wording is embedded elsewhere.
+
 `PipelineOrchestrator.generate()` binds supplied templates and order values without a model call. Optional supplied Spanish/back-translation templates support offline demonstrations. Missing translations remain unavailable.
 
 `generate_live()` composes source English and orders, then gives LLM1 one core rule: “Change the language, not the information. Preserve every instruction, fact, condition, exception, warning, and clinical value.” It measures restored-text FKGL and retries from the source up to three times with score feedback to reach 5.0–6.9. If readability remains out of range, the third draft stays visible and is flagged instead of discarded. Protected-value and judge failures also retain the available simplified draft. All failed drafts remain pending and blocked from approval. If Spanish is requested, LLM1 translates and LLM2 back-translates; LLM2 judges English safety in either case. The UI defaults to `translate=False`.
