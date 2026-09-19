@@ -745,7 +745,7 @@ def _compose_original_preview_html(
     )
     return (
         "<div class='clinical-orders-preview'>"
-        "<div class='clinical-preview-title'>Team7 Source Clinical Orders</div>"
+        "<div class='clinical-preview-title'>Original Clinical Orders</div>"
         f"<div class='clinical-field-row'><strong>MRN</strong><span>{escape(orders.patient_id)}</span></div>"
         f"{age_row}"
         f"<div class='clinical-field-row'><strong>Diagnosis</strong><span>{escape(orders.diagnosis)}</span></div>"
